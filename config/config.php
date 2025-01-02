@@ -6,7 +6,7 @@ return array (
     'port' => '3306',
     'dbname' => 'iptv_proxy',
     'username' => 'iptv_proxy',
-    'password' => 'Pc2ccw30',
+    'password' => 'your_password',
   ),
   'redis' => 
   array (
