@@ -332,9 +332,12 @@ class Server
             // 设置流为非阻塞模式
             stream_set_blocking($source, false);
             
+            // 获取缓冲区大小配置并转换为字节
+            $bufferSize = $this->config->get('proxy_buffer_size', 8192) * 1024;
+            
             // 转发流内容
             while (!feof($source) && $this->isRunning) {
-                $data = @fread($source, 8192);
+                $data = @fread($source, $bufferSize);
                 if ($data === false) {
                     break;
                 }
