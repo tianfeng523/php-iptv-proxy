@@ -15,11 +15,11 @@ class MonitorController
     public function __construct()
     {
         $this->channelModel = new Channel();
-        $this->settingsModel = new Settings();
+        $this->settingsModel = Settings::getInstance();
         $this->db = $this->channelModel->getConnection();
         
         // 初始化Redis连接
-        $settings = $this->settingsModel->getAllSettings();
+        $settings = $this->settingsModel->get();
         $this->redis = new Redis();
         try {
             $this->redis->connect(
@@ -36,7 +36,7 @@ class MonitorController
 
     public function index()
     {
-        $settings = $this->settingsModel->getAllSettings();
+        $settings = $this->settingsModel->get();
         $refreshInterval = $settings['monitor_refresh_interval'] ?? 5;
         
         // 获取初始数据，避免页面空白
@@ -48,46 +48,69 @@ class MonitorController
     public function getStats()
     {
         try {
-            // 使用单个查询获取所有统计数据
+            // 尝试从缓存获取所有统计数据
+            $cacheKey = 'monitor:all_stats';
+            $allStats = $this->getFromCache($cacheKey, 10);
+            
+            if ($allStats !== false) {
+                return [
+                    'success' => true,
+                    'data' => $allStats
+                ];
+            }
+            
+            // 如果缓存不存在，重新计算所有统计数据
+            
+            // 1. 基础统计数据
             $query = "SELECT 
                      COUNT(*) as total_channels,
-                     SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as active_channels,
-                     SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) as error_channels,
+                     SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_channels,
+                     SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_channels,
                      AVG(latency) as avg_latency
                      FROM channels";
             
             $stmt = $this->db->query($query);
             $channelStats = $stmt->fetch(\PDO::FETCH_ASSOC);
             
-            // 获取分组统计信息（使用Redis缓存）
-            $groupStats = $this->getFromCache('monitor:group_stats', 60);
+            // 2. 分组统计信息（使用Redis缓存，缓存时间5分钟）
+            $groupStats = $this->getFromCache('monitor:group_stats', 300);
             if ($groupStats === false) {
                 $groupStats = $this->channelModel->getGroupStats();
-                $this->saveToCache('monitor:group_stats', $groupStats, 60);
+                $this->saveToCache('monitor:group_stats', $groupStats, 300);
             }
             
-            // 获取性能指标（使用Redis缓存）
-            $performanceStats = $this->getFromCache('monitor:perf_stats', 300);
+            // 3. 性能指标（使用Redis缓存，缓存时间1小时）
+            $performanceStats = $this->getFromCache('monitor:perf_stats', 3600);
             if ($performanceStats === false) {
                 $performanceStats = $this->channelModel->getPerformanceStats();
-                $this->saveToCache('monitor:perf_stats', $performanceStats, 300);
+                $this->saveToCache('monitor:perf_stats', $performanceStats, 3600);
             }
             
-            // 获取最近的错误（实时数据）
+            // 4. 最近的错误（实时数据，不缓存）
             $recentErrors = $this->channelModel->getRecentErrors();
-
-            // 获取Redis性能数据
-            $redisStats = $this->getRedisStats();
-
+            
+            // 5. Redis性能数据（缓存10秒）
+            $redisStats = $this->getFromCache('monitor:redis_stats', 10);
+            if ($redisStats === false) {
+                $redisStats = $this->getRedisStats();
+                $this->saveToCache('monitor:redis_stats', $redisStats, 10);
+            }
+            
+            // 组合所有数据
+            $allStats = [
+                'channelStats' => $channelStats,
+                'groupStats' => $groupStats,
+                'performanceStats' => $performanceStats,
+                'recentErrors' => $recentErrors,
+                'redisStats' => $redisStats
+            ];
+            
+            // 缓存组合后的数据（10秒）
+            $this->saveToCache($cacheKey, $allStats, 10);
+            
             return [
                 'success' => true,
-                'data' => [
-                    'channelStats' => $channelStats,
-                    'groupStats' => $groupStats,
-                    'performanceStats' => $performanceStats,
-                    'recentErrors' => $recentErrors,
-                    'redisStats' => $redisStats
-                ]
+                'data' => $allStats
             ];
         } catch (\Exception $e) {
             error_log("Error getting monitor stats: " . $e->getMessage());

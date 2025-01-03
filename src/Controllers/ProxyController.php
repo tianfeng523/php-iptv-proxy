@@ -23,16 +23,12 @@ class ProxyController
             $pid = @file_get_contents($this->pidFile);
         }
         if (!$pid) {
-            $this->logger->info('没有PID信息');
             return false;
         }
-        
-        $this->logger->info('检查进程状态，PID: ' . $pid);
         
         // 1. 使用ps命令检查进程
         exec("ps -p $pid", $psOutput, $psReturnVar);
         if ($psReturnVar !== 0) {
-            $this->logger->info('进程不存在');
             return false;
         }
         
@@ -42,11 +38,9 @@ class ProxyController
         
         // 如果端口未被占用，进程可能正在停止中
         if (empty($netstatOutput)) {
-            $this->logger->info('端口未被占用，进程可能正在停止中');
             return false;
         }
         
-        $this->logger->info('进程正在运行');
         return true;
     }
     
@@ -122,28 +116,11 @@ class ProxyController
         
         // 执行启动命令
         $command = sprintf('%s %s start 2>&1', $phpBinary, escapeshellarg($scriptPath));
-        $this->logger->info('执行启动命令: ' . $command);
-        
-        // 记录当前工作目录
-        $this->logger->info('当前工作目录: ' . getcwd());
-        
-        // 记录PHP版本和操作系统信息
-        $this->logger->info('PHP版本: ' . PHP_VERSION);
-        $this->logger->info('操作系统: ' . PHP_OS);
-        
         exec($command, $output, $returnVar);
-        
-        // 记录命令输出
-        if ($output) {
-            $this->logger->info('命令输出: ' . implode("\n", $output));
-        }
-        
-        // 记录返回值
-        $this->logger->info('命令返回值: ' . $returnVar);
         
         // 如果命令执行失败，直接返回错误
         if ($returnVar !== 0) {
-            $this->logger->error('命令执行失败，返回值: ' . $returnVar);
+            $this->logger->error('代理服务器启动失败');
             $this->sendJsonResponse([
                 'success' => false,
                 'message' => '代理服务器启动失败: ' . implode("\n", $output)
@@ -157,17 +134,9 @@ class ProxyController
             clearstatcache(true, $this->pidFile);
             $pid = @file_get_contents($this->pidFile);
             
-            if ($pid) {
-                $this->logger->info('检测到 PID 文件，PID: ' . $pid);
-                if ($this->isRunning($pid)) {
-                    $started = true;
-                    $this->logger->info('进程已启动并运行中');
-                    break;
-                } else {
-                    $this->logger->info('PID 文件存在但进程未运行');
-                }
-            } else {
-                $this->logger->info('等待 PID 文件创建...');
+            if ($pid && $this->isRunning($pid)) {
+                $started = true;
+                break;
             }
             
             sleep(1);
@@ -175,7 +144,6 @@ class ProxyController
         }
         
         if ($started) {
-            $this->logger->info('代理服务器启动成功');
             $this->sendJsonResponse([
                 'success' => true,
                 'message' => '代理服务器已启动'
@@ -194,102 +162,54 @@ class ProxyController
     
     private function findPhpBinary()
     {
-        $this->logger->info('开始查找 PHP CLI 可执行文件');
-        $this->logger->info('当前 PHP 版本: ' . PHP_VERSION);
-        $this->logger->info('当前 PHP 二进制文件: ' . PHP_BINARY);
-        $this->logger->info('操作系统: ' . PHP_OS);
-        
         // 检查是否是宝塔环境
         $btPanelPath = '/www/server/panel/class/panelSite.py';
-        $this->logger->info('检查宝塔面板文件: ' . $btPanelPath);
-        $this->logger->info('文件是否存在: ' . (file_exists($btPanelPath) ? '是' : '否'));
         
         if (file_exists($btPanelPath)) {
-            $this->logger->info('检测到宝塔环境');
-            
             // 从当前 PHP 进程路径中提取版本号
-            $this->logger->info('PHP进程路径: ' . PHP_BINARY);
-            
             if (preg_match('/\/www\/server\/php\/(\d+)\//', PHP_BINARY, $matches)) {
                 $version = $matches[1];
-                $this->logger->info('提取到PHP版本号: ' . $version);
                 
                 // 构建宝塔 PHP CLI 路径
                 $btPath = "/www/server/php/{$version}/bin/php";
-                $this->logger->info('尝试宝塔 PHP 路径: ' . $btPath);
-                
-                if (file_exists($btPath)) {
-                    $this->logger->info('文件存在: ' . $btPath);
-                    if (is_executable($btPath)) {
-                        $this->logger->info('文件可执行');
-                        
-                        // 验证是否是 CLI 版本
-                        $command = sprintf('"%s" -v 2>&1', $btPath);
-                        $this->logger->info('执行验证命令: ' . $command);
-                        exec($command, $output, $returnVar);
-                        
-                        if ($output) {
-                            $this->logger->info('命令输出: ' . implode("\n", $output));
-                        }
-                        
-                        if ($returnVar === 0) {
-                            $this->logger->info('找到可用的 PHP CLI: ' . $btPath);
-                            return $btPath;
-                        } else {
-                            $this->logger->info('命令执行失败，返回值: ' . $returnVar);
-                        }
-                    } else {
-                        $this->logger->info('文件不可执行，尝试修复权限');
-                        @chmod($btPath, 0755);
-                        if (is_executable($btPath)) {
-                            $this->logger->info('权限修复成功');
-                            return $btPath;
-                        } else {
-                            $this->logger->info('权限修复失败');
-                        }
-                    }
-                } else {
-                    $this->logger->info('文件不存在: ' . $btPath);
-                }
-            } else {
-                $this->logger->info('无法从PHP进程路径提取版本号');
-                
-                // 尝试直接使用当前PHP版本
-                $version = PHP_MAJOR_VERSION . PHP_MINOR_VERSION;
-                $this->logger->info('使用当前PHP版本: ' . $version);
-                
-                $btPath = "/www/server/php/{$version}/bin/php";
-                $this->logger->info('尝试宝塔 PHP 路径: ' . $btPath);
                 
                 if (file_exists($btPath) && is_executable($btPath)) {
-                    $this->logger->info('找到可用的 PHP CLI: ' . $btPath);
+                    // 验证是否是 CLI 版本
+                    $command = sprintf('"%s" -v 2>&1', $btPath);
+                    exec($command, $output, $returnVar);
+                    
+                    if ($returnVar === 0) {
+                        return $btPath;
+                    }
+                }
+            } else {
+                // 尝试直接使用当前PHP版本
+                $version = PHP_MAJOR_VERSION . PHP_MINOR_VERSION;
+                $btPath = "/www/server/php/{$version}/bin/php";
+                
+                if (file_exists($btPath) && is_executable($btPath)) {
                     return $btPath;
                 }
             }
         }
         
         // 如果宝塔环境检测失败，尝试直接使用 php 命令
-        $this->logger->info('尝试直接使用 php 命令');
         exec('command -v php 2>/dev/null', $output, $returnVar);
         
         if ($returnVar === 0 && !empty($output)) {
             $phpPath = trim($output[0]);
-            $this->logger->info('找到 PHP 命令: ' . $phpPath);
             
             // 验证是否可用
             $command = sprintf('"%s" -v 2>&1', $phpPath);
-            $this->logger->info('执行验证命令: ' . $command);
             exec($command, $output, $returnVar);
             
             if ($returnVar === 0) {
-                $this->logger->info('PHP 命令可用');
                 return $phpPath;
             }
         }
         
         // 如果是 Windows 系统
         if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-            // Windows 系统的可能路径
             $possiblePaths = [
                 'C:\\php\\php.exe',
                 'C:\\xampp\\php\\php.exe',
@@ -297,75 +217,47 @@ class ProxyController
                 'C:\\wamp64\\bin\\php\\php8.1.0\\php.exe',
                 'C:\\wamp64\\bin\\php\\php8.0.0\\php.exe',
                 'C:\\wamp64\\bin\\php\\php7.4.0\\php.exe',
-                'php.exe' // 如果 PHP 在系统 PATH 中
+                'php.exe'
             ];
             
             foreach ($possiblePaths as $path) {
-                $this->logger->info('检查 Windows 路径: ' . $path);
-                
-                // 对于 php.exe，使用 where 命令查找实际路径
                 if ($path === 'php.exe') {
                     $command = 'where php.exe';
-                    $this->logger->info('执行命令: ' . $command);
                     exec($command, $output, $returnVar);
                     
                     if ($returnVar === 0 && !empty($output)) {
                         $path = trim($output[0]);
-                        $this->logger->info('在 PATH 中找到 PHP: ' . $path);
                     }
                 }
                 
-                if (file_exists($path)) {
-                    $this->logger->info('文件存在: ' . $path);
-                    if (is_executable($path)) {
-                        $this->logger->info('找到可用的 PHP: ' . $path);
-                        return $path;
-                    }
+                if (file_exists($path) && is_executable($path)) {
+                    return $path;
                 }
             }
         } else {
-            // Linux/Unix 系统的可能路径
             $possiblePaths = [
-                '/usr/bin/php',                   // 系统默认 PHP
-                '/usr/local/bin/php',             // 自定义安装的 PHP
-                '/usr/local/php/bin/php',         // 源码编译安装的 PHP
-                'php'                             // 如果 PHP 在系统 PATH 中
+                '/usr/bin/php',
+                '/usr/local/bin/php',
+                '/usr/local/php/bin/php',
+                'php'
             ];
             
             foreach ($possiblePaths as $path) {
-                $this->logger->info('检查 Linux 路径: ' . $path);
-                
-                // 对于不带路径的 php，使用 which 命令查找实际路径
                 if ($path === 'php') {
                     $command = 'which php 2>/dev/null';
-                    $this->logger->info('执行命令: ' . $command);
                     exec($command, $output, $returnVar);
                     
                     if ($returnVar === 0 && !empty($output)) {
                         $path = trim($output[0]);
-                        $this->logger->info('在 PATH 中找到 PHP: ' . $path);
                     }
                 }
                 
-                if (file_exists($path)) {
-                    $this->logger->info('文件存在: ' . $path);
-                    if (is_executable($path)) {
-                        // 验证是否是 CLI 版本
-                        $command = sprintf('"%s" -v 2>&1', $path);
-                        $this->logger->info('执行验证命令: ' . $command);
-                        exec($command, $output, $returnVar);
-                        
-                        if ($returnVar === 0) {
-                            $this->logger->info('找到可用的 PHP CLI: ' . $path);
-                            return $path;
-                        }
-                    } else {
-                        $this->logger->info('尝试修复权限');
-                        @chmod($path, 0755);
-                        if (is_executable($path)) {
-                            $this->logger->info('权限修复成功');
-                            return $path;
-                        }
+                if (file_exists($path) && is_executable($path)) {
+                    $command = sprintf('"%s" -v 2>&1', $path);
+                    exec($command, $output, $returnVar);
+                    
+                    if ($returnVar === 0) {
+                        return $path;
                     }
                 }
             }
@@ -410,64 +302,36 @@ class ProxyController
         
         // 执行停止命令
         $command = sprintf('%s %s stop 2>&1', $phpBinary, escapeshellarg($scriptPath));
-        $this->logger->info('执行停止命令: ' . $command);
-        
         exec($command, $output, $returnVar);
-        
-        // 记录命令输出
-        if ($output) {
-            $this->logger->info('命令输出: ' . implode("\n", $output));
-        }
-        
-        // 记录返回值
-        $this->logger->info('命令返回值: ' . $returnVar);
         
         // 发送SIGTERM信号
         if ($pid) {
             posix_kill((int)$pid, SIGTERM);
-            $this->logger->info('已发送SIGTERM信号到进程: ' . $pid);
         }
         
         // 等待进程停止（最多等待10秒）
         $timeout = 10;
         $stopped = false;
         while ($timeout > 0) {
-            $this->logger->info('等待进程停止...');
-            
-            // 检查进程是否还在运行
-            $isStillRunning = false;
-            
-            // 使用ps命令检查
-            exec("ps -p $pid", $psOutput, $psReturnVar);
-            if ($psReturnVar !== 0) {
-                $isStillRunning = false;
-            } else {
-                // 检查端口是否还在监听
-                $port = $this->config->get('proxy_port', '9260');
-                exec("netstat -tnlp 2>/dev/null | grep :$port | grep $pid", $netstatOutput);
-                $isStillRunning = !empty($netstatOutput);
-            }
-            
-            if (!$isStillRunning) {
+            if (!$this->isRunning($pid)) {
                 $stopped = true;
                 break;
             }
             
             sleep(1);
             $timeout--;
-            
-            // 如果等待超过5秒，尝试发送SIGKILL信号
-            if ($timeout == 5) {
-                $this->logger->info('进程仍在运行，尝试发送SIGKILL信号');
-                posix_kill((int)$pid, SIGKILL);
-            }
+        }
+        
+        // 如果进程仍在运行，尝试强制终止
+        if (!$stopped && $pid) {
+            posix_kill((int)$pid, SIGKILL);
+            sleep(1);
         }
         
         // 清理PID文件
         @unlink($this->pidFile);
         
-        if ($stopped) {
-            $this->logger->info('代理服务器已成功停止');
+        if ($stopped || !$this->isRunning($pid)) {
             $this->sendJsonResponse([
                 'success' => true,
                 'message' => '代理服务器已停止'
@@ -476,7 +340,7 @@ class ProxyController
             $this->logger->error('代理服务器停止失败');
             $this->sendJsonResponse([
                 'success' => false,
-                'message' => '代理服务器停止失败，请手动检查进程状态'
+                'message' => '代理服务器停止失败'
             ]);
         }
     }

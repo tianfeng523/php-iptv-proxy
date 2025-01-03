@@ -99,17 +99,11 @@ switch ($command) {
         // 检查是否已经在运行
         $pid = getPid();
         if ($pid && isRunning($pid)) {
-            echo "代理服务器已经在运行中 (PID: $pid)\n";
+            echo "代理服务器已经在运行中\n";
             exit(1);
         }
         
-        // 如果PID文件存在但进程不存在，清理文件
-        if ($pid) {
-            $logger->info("进程 $pid 不存在，清理文件");
-            cleanupFiles();
-        }
-        
-        // 创建守护进程
+        // 如果支持pcntl，则使用守护进程模式
         if (function_exists('pcntl_fork')) {
             daemonize();
         }
@@ -120,18 +114,18 @@ switch ($command) {
         // 记录PID
         $pid = getmypid();
         file_put_contents($pidFile, $pid);
-        $logger->info("启动代理服务器 (PID: $pid)");
+        $logger->info("代理服务器已启动 (PID: $pid)");
         
         // 注册信号处理
         pcntl_signal(SIGTERM, function($signo) use ($server, $logger) {
-            $logger->info("收到停止信号");
+            $logger->info("代理服务器正在停止");
             $server->stop();
             cleanupFiles();
             exit(0);
         });
         
         pcntl_signal(SIGINT, function($signo) use ($server, $logger) {
-            $logger->info("收到中断信号");
+            $logger->info("代理服务器正在停止");
             $server->stop();
             cleanupFiles();
             exit(0);
@@ -142,7 +136,7 @@ switch ($command) {
         
         // 启动服务器
         if (!$server->start()) {
-            $logger->error("启动服务器失败");
+            $logger->error("代理服务器启动失败");
             cleanupFiles();
             exit(1);
         }
@@ -159,22 +153,21 @@ switch ($command) {
         // 发送停止信号
         posix_kill($pid, SIGTERM);
         
-        // 等待进程结束
+        // 等待进程停止
         $timeout = 10;
         while ($timeout > 0 && isRunning($pid)) {
             sleep(1);
             $timeout--;
         }
         
-        // 如果进程仍在运行，强制结束
+        // 如果进程仍在运行，强制终止
         if (isRunning($pid)) {
             posix_kill($pid, SIGKILL);
-            echo "强制停止代理服务器 (PID: $pid)\n";
-        } else {
-            echo "代理服务器已停止 (PID: $pid)\n";
+            sleep(1);
         }
         
         cleanupFiles();
+        echo "代理服务器已停止\n";
         break;
         
     case 'status':

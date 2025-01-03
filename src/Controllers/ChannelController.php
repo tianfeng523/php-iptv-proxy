@@ -40,9 +40,17 @@ class ChannelController
 
     public function checkChannel($id)
     {
-        $result = $this->channelModel->checkChannel($id);
-        header('Content-Type: application/json');
-        echo json_encode($result);
+        try {
+            header('Content-Type: application/json');
+            $result = $this->channelModel->checkChannel($id);
+            echo json_encode($result);
+        } catch (\Exception $e) {
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => false,
+                'message' => '检查失败：' . $e->getMessage()
+            ]);
+        }
     }
 
     public function checkAll()
@@ -51,6 +59,8 @@ class ChannelController
         $groupId = isset($_GET['group_id']) ? $_GET['group_id'] : null;
         
         try {
+            header('Content-Type: application/json');
+            
             // 获取需要检查的频道ID列表
             $query = "SELECT id FROM channels";
             if ($groupId !== null) {
@@ -70,6 +80,10 @@ class ChannelController
             
             $ids = array_column($stmt->fetchAll(\PDO::FETCH_ASSOC), 'id');
             
+            if (empty($ids)) {
+                throw new \Exception('没有找到需要检查的频道');
+            }
+            
             $taskId = uniqid('check_', true);
             $_SESSION['check_tasks'][$taskId] = [
                 'total' => count($ids),
@@ -80,11 +94,50 @@ class ChannelController
             // 启动异步检查任务
             $this->startCheckTask($taskId, $ids);
 
-            header('Content-Type: application/json');
-            echo json_encode(['success' => true, 'task_id' => $taskId]);
+            echo json_encode([
+                'success' => true,
+                'taskId' => $taskId
+            ]);
         } catch (\Exception $e) {
+            echo json_encode([
+                'success' => false,
+                'message' => $e->getMessage()
+            ]);
+        }
+    }
+
+    public function checkMultiple()
+    {
+        try {
             header('Content-Type: application/json');
-            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+            
+            // 获取POST数据
+            $data = json_decode(file_get_contents('php://input'), true);
+            $ids = $data['ids'] ?? [];
+            
+            if (empty($ids)) {
+                throw new \Exception('未选择要检查的频道');
+            }
+
+            $taskId = uniqid('check_', true);
+            $_SESSION['check_tasks'][$taskId] = [
+                'total' => count($ids),
+                'completed' => 0,
+                'status' => '开始检查...'
+            ];
+
+            // 启动异步检查任务
+            $this->startCheckTask($taskId, $ids);
+
+            echo json_encode([
+                'success' => true,
+                'taskId' => $taskId
+            ]);
+        } catch (\Exception $e) {
+            echo json_encode([
+                'success' => false,
+                'message' => $e->getMessage()
+            ]);
         }
     }
 
@@ -92,17 +145,22 @@ class ChannelController
     {
         // 这里应该使用队列系统，但为了简单，我们直接在这里处理
         foreach ($ids as $index => $id) {
-            $this->channelModel->checkChannel($id);
-            $_SESSION['check_tasks'][$taskId]['completed']++;
-            $_SESSION['check_tasks'][$taskId]['status'] = sprintf(
-                "已检查 %d/%d 个频道 (%.1f%%)",
-                $_SESSION['check_tasks'][$taskId]['completed'],
-                $_SESSION['check_tasks'][$taskId]['total'],
-                ($_SESSION['check_tasks'][$taskId]['completed'] / $_SESSION['check_tasks'][$taskId]['total']) * 100
-            );
-            // 每检查完一个频道就刷新session
-            session_write_close();
-            session_start();
+            try {
+                $this->channelModel->checkChannel($id);
+                $_SESSION['check_tasks'][$taskId]['completed']++;
+                $_SESSION['check_tasks'][$taskId]['status'] = sprintf(
+                    "已检查 %d/%d 个频道 (%.1f%%)",
+                    $_SESSION['check_tasks'][$taskId]['completed'],
+                    $_SESSION['check_tasks'][$taskId]['total'],
+                    ($_SESSION['check_tasks'][$taskId]['completed'] / $_SESSION['check_tasks'][$taskId]['total']) * 100
+                );
+                // 每检查完一个频道就刷新session
+                session_write_close();
+                session_start();
+            } catch (\Exception $e) {
+                error_log("Error checking channel {$id}: " . $e->getMessage());
+                continue;
+            }
         }
     }
 
@@ -129,9 +187,64 @@ class ChannelController
 
     public function deleteChannel($id)
     {
-        $result = $this->channelModel->deleteChannel($id);
-        header('Content-Type: application/json');
-        echo json_encode($result);
+        try {
+            header('Content-Type: application/json');
+            
+            // 开始事务
+            $this->channelModel->getConnection()->beginTransaction();
+            
+            // 获取频道信息用于日志记录
+            $channel = $this->channelModel->getChannel($id);
+            if (!$channel) {
+                throw new \Exception('频道不存在');
+            }
+            
+            // 获取频道所属分组ID
+            $query = "SELECT group_id FROM channels WHERE id = :id";
+            $stmt = $this->channelModel->getConnection()->prepare($query);
+            $stmt->execute([':id' => $id]);
+            $groupId = $stmt->fetch(\PDO::FETCH_COLUMN);
+
+            // 删除频道
+            $stmt = $this->channelModel->getConnection()->prepare("DELETE FROM channels WHERE id = :id");
+            $result = $stmt->execute([':id' => $id]);
+
+            if ($result && $groupId) {
+                // 检查分组是否还有其他频道
+                $stmt = $this->channelModel->getConnection()->prepare(
+                    "SELECT COUNT(*) FROM channels WHERE group_id = :group_id"
+                );
+                $stmt->execute([':group_id' => $groupId]);
+                $count = $stmt->fetchColumn();
+                
+                if ($count == 0) {
+                    // 删除空分组
+                    $stmt = $this->channelModel->getConnection()->prepare(
+                        "DELETE FROM channel_groups WHERE id = :group_id"
+                    );
+                    $stmt->execute([':group_id' => $groupId]);
+                }
+            }
+            
+            // 提交事务
+            $this->channelModel->getConnection()->commit();
+            
+            echo json_encode([
+                'success' => true,
+                'message' => '频道已删除'
+            ]);
+        } catch (\Exception $e) {
+            // 回滚事务
+            if ($this->channelModel->getConnection()->inTransaction()) {
+                $this->channelModel->getConnection()->rollBack();
+            }
+            
+            error_log("Error deleting channel {$id}: " . $e->getMessage());
+            echo json_encode([
+                'success' => false,
+                'message' => '删除频道失败：' . $e->getMessage()
+            ]);
+        }
     }
 
     public function deleteMultiple()
@@ -146,9 +259,39 @@ class ChannelController
 
     public function deleteAll()
     {
-        $result = $this->channelModel->deleteAll();
-        header('Content-Type: application/json');
-        echo json_encode($result);
+        try {
+            header('Content-Type: application/json');
+            
+            // 开始事务
+            $this->channelModel->getConnection()->beginTransaction();
+            
+            // 删除所有频道
+            $stmt = $this->channelModel->getConnection()->prepare("DELETE FROM channels");
+            $stmt->execute();
+            
+            // 删除空分组
+            $stmt = $this->channelModel->getConnection()->prepare("DELETE FROM channel_groups WHERE NOT EXISTS (SELECT 1 FROM channels WHERE channels.group_id = channel_groups.id)");
+            $stmt->execute();
+            
+            // 提交事务
+            $this->channelModel->getConnection()->commit();
+            
+            echo json_encode([
+                'success' => true,
+                'message' => '所有频道已清空'
+            ]);
+        } catch (\Exception $e) {
+            // 回滚事务
+            if ($this->channelModel->getConnection()->inTransaction()) {
+                $this->channelModel->getConnection()->rollBack();
+            }
+            
+            error_log("Error deleting all channels: " . $e->getMessage());
+            echo json_encode([
+                'success' => false,
+                'message' => '清空频道失败：' . $e->getMessage()
+            ]);
+        }
     }
 
     public function add()

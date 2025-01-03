@@ -240,6 +240,21 @@ function buildUrl($params)
     let checkModal;
     let currentCheckTask = null;
 
+    function buildUrl(params) {
+        const current = new URLSearchParams(window.location.search);
+        
+        // 更新或添加新参数
+        Object.entries(params).forEach(([key, value]) => {
+            if (value === null || value === '') {
+                current.delete(key);
+            } else {
+                current.set(key, value);
+            }
+        });
+        
+        return '?' + current.toString();
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         checkModal = new bootstrap.Modal(document.getElementById('checkProgressModal'));
     });
@@ -254,360 +269,287 @@ function buildUrl($params)
         }
     }
 
-    function startCheckTask(url, ids = null) {
-        checkModal.show();
-        updateProgress(0, '正在开始检查...');
+    async function checkChannel(id) {
+        try {
+            const response = await fetch(`/admin/channels/check/${id}`);
+            if (!response.ok) {
+                throw new Error('网络请求失败');
+            }
+            const result = await response.json();
+            
+            // 更新UI
+            const row = document.getElementById(`channel-${id}`);
+            if (row) {
+                // 更新状态
+                const statusCell = row.querySelector('.status-icon');
+                if (statusCell) {
+                    const badge = statusCell.querySelector('.badge');
+                    if (badge) {
+                        badge.className = `badge bg-${result.status === 'active' ? 'success' : 'danger'}`;
+                        badge.textContent = result.status === 'active' ? '正常' : '异常';
+                    }
+                }
+                
+                // 更新延时
+                const latencyCell = row.querySelector('.latency-cell');
+                if (latencyCell) {
+                    latencyCell.textContent = result.status === 'active' ? `${result.latency}ms` : '-';
+                }
+                
+                // 更新检查时间
+                const checkedAtCell = row.querySelector('.checked-at-cell');
+                if (checkedAtCell && result.checked_at) {
+                    checkedAtCell.textContent = result.checked_at;
+                }
+                
+                // 更新错误次数
+                const errorCountCell = row.querySelector('.error-count-cell');
+                if (errorCountCell) {
+                    if (result.status === 'error') {
+                        errorCountCell.innerHTML = `<span class="badge bg-warning">${result.error_count}</span>`;
+                    } else {
+                        errorCountCell.innerHTML = '<span>0</span>';
+                    }
+                }
+            }
 
-        const data = ids ? { ids } : {};
+            // 如果频道被删除，显示提示并刷新页面
+            if (result.deleted) {
+                alert(result.message);
+                location.reload();
+                return;
+            }
+
+            // 显示检查结果
+            if (!result.success) {
+                alert(result.message);
+            }
+        } catch (error) {
+            console.error('检查频道失败:', error);
+            alert('检查频道失败: ' + error.message);
+        }
+    }
+
+    function checkSelected() {
+        const selectedChannels = Array.from(document.querySelectorAll('.channel-select:checked')).map(cb => cb.value);
+        if (selectedChannels.length === 0) {
+            alert('请选择要检查的频道');
+            return;
+        }
         
-        // 开始检查任务
-        fetch(url, {
+        checkChannels(selectedChannels);
+    }
+
+    function checkCurrentGroup() {
+        const allChannels = Array.from(document.querySelectorAll('.channel-select')).map(cb => cb.value);
+        if (allChannels.length === 0) {
+            alert('当前分组没有频道');
+            return;
+        }
+        
+        checkChannels(allChannels);
+    }
+
+    function checkAll() {
+        if (!confirm('确定要检查所有频道吗？这可能需要较长时间。')) {
+            return;
+        }
+        
+        fetch('/admin/channels/check-all', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(data)
+                'Content-Type': 'application/json'
+            }
         })
-        .then(response => response.json())
-        .then(data => {
-            if (data.task_id) {
-                currentCheckTask = data.task_id;
-                pollCheckProgress(data.task_id);
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('网络请求失败');
             }
+            return response.json();
+        })
+        .then(result => {
+            if (result.success) {
+                currentCheckTask = result.taskId;
+                checkModal.show();
+                monitorProgress();
+            } else {
+                alert(result.message || '启动检查任务失败');
+            }
+        })
+        .catch(error => {
+            console.error('启动检查任务失败:', error);
+            alert('启动检查任务失败: ' + error.message);
         });
     }
 
-    function pollCheckProgress(taskId) {
-        fetch(`/admin/channels/check-progress/${taskId}`)
-        .then(response => response.json())
-        .then(data => {
-            updateProgress(data.progress, data.status);
+    async function checkChannels(channelIds) {
+        try {
+            const response = await fetch('/admin/channels/check-multiple', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ ids: channelIds })
+            });
             
-            if (data.progress < 100 && currentCheckTask === taskId) {
-                setTimeout(() => pollCheckProgress(taskId), 1000);
+            if (!response.ok) {
+                throw new Error('网络请求失败');
+            }
+
+            const result = await response.json();
+            if (result.success) {
+                currentCheckTask = result.taskId;
+                checkModal.show();
+                monitorProgress();
             } else {
-                setTimeout(() => {
+                alert(result.message || '启动检查任务失败');
+            }
+        } catch (error) {
+            console.error('启动检查任务失败:', error);
+            alert('启动检查任务失败: ' + error.message);
+        }
+    }
+
+    function monitorProgress() {
+        if (!currentCheckTask) return;
+        
+        const checkProgress = () => {
+            fetch(`/admin/channels/check-progress/${currentCheckTask}`)
+                .then(response => response.json())
+                .then(result => {
+                    updateProgress(result.progress, result.status);
+                    
+                    if (result.progress < 100) {
+                        setTimeout(checkProgress, 1000);
+                    } else {
+                        setTimeout(() => {
+                            checkModal.hide();
+                            location.reload();
+                        }, 1000);
+                    }
+                })
+                .catch(error => {
+                    console.error('获取进度失败:', error);
                     checkModal.hide();
-                    location.reload();
-                }, 1000);
-            }
-        });
+                });
+        };
+        
+        checkProgress();
     }
 
-    function buildQueryString(params) {
-        const current = new URLSearchParams(window.location.search);
-        Object.keys(params).forEach(key => {
-            current.delete(key);
-        });
-
-        Object.entries(params).forEach(([key, value]) => {
-            if (value === null || value === '') {
-                current.delete(key);
-            } else {
-                current.set(key, value);
-            }
-        });
-        return current.toString();
-    }
-
-    function changePageSize(perPage) {
-        window.location.href = '?' + buildQueryString({
-            'per_page': perPage,
-            'page': 1
+    function toggleAll(checkbox) {
+        document.querySelectorAll('.channel-select').forEach(cb => {
+            cb.checked = checkbox.checked;
         });
     }
 
     function filterByGroup(groupId) {
-        window.location.href = '?' + buildQueryString({
-            'group_id': groupId,
-            'page': 1
-        });
+        location.href = buildUrl({ group_id: groupId, page: 1 });
     }
 
-    function toggleAll(checkbox) {
-        document.querySelectorAll('.channel-select').forEach(item => {
-            item.checked = checkbox.checked;
+    function changePageSize(size) {
+        location.href = buildUrl({ per_page: size, page: 1 });
+    }
+
+    function deleteChannel(id) {
+        if (!confirm('确定要删除这个频道吗？')) {
+            return;
+        }
+        
+        fetch(`/admin/channels/delete/${id}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('网络请求失败');
+            }
+            return response.json();
+        })
+        .then(result => {
+            if (result.success) {
+                const row = document.getElementById(`channel-${id}`);
+                if (row) {
+                    row.remove();
+                }
+            } else {
+                alert(result.message || '删除频道失败');
+            }
+        })
+        .catch(error => {
+            console.error('删除频道失败:', error);
+            alert('删除频道失败: ' + error.message);
         });
     }
 
     function deleteSelected() {
-        const selected = Array.from(document.querySelectorAll('.channel-select:checked'))
-            .map(checkbox => checkbox.value);
-
-        if (selected.length === 0) {
-            alert('请先选择要删除的频道');
-            return;
-        }
-
-        if (confirm(`确定要删除选中的 ${selected.length} 个频道吗？`)) {
-            fetch('/admin/channels/delete-multiple', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ ids: selected })
-            }).then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    location.reload();
-                } else {
-                    alert(data.message || '删除失败');
-                }
-            });
-        }
-    }
-
-    function deleteAll() {
-        if (confirm('确定要清空所有频道吗？此操作不可恢复！')) {
-            fetch('/admin/channels/delete-all', {
-                method: 'POST'
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data && data.success) {
-                    location.reload();
-                } else {
-                    alert(data.message || '删除失败');
-                }
-            })
-            .catch(error => {
-                console.error('删除失败:', error);
-                alert('删除失败，请查看控制台了解详情');
-            });
-        }
-    }
-
-    function deleteChannel(id) {
-        if (confirm('确定要删除这个频道吗？')) {
-            fetch(`/admin/channels/delete/${id}`, {
-                method: 'POST'
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data && data.success) {
-                    location.reload();
-                } else {
-                    alert(data.message || '删除失败');
-                }
-            })
-            .catch(error => {
-                console.error('删除失败:', error);
-                alert('删除失败，请查看控制台了解详情');
-            });
-        }
-    }
-
-    function checkChannel(id) {
-        fetch(`/admin/channels/check/${id}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // 更新状态图标
-                    const statusIcon = document.querySelector(`#channel-${id} .status-icon`);
-                    if (statusIcon) {
-                        let badgeClass = 'secondary';
-                        let statusText = '未启用';
-                        
-                        if (data.status === 'active') {
-                            badgeClass = 'success';
-                            statusText = '正常';
-                        } else if (data.status === 'error') {
-                            badgeClass = 'danger';
-                            statusText = '异常';
-                        }
-                        
-                        statusIcon.innerHTML = `<span class="badge bg-${badgeClass}">${statusText}</span>`;
-                    }
-                    
-                    // 更新延迟
-                    const latencyCell = document.querySelector(`#channel-${id} .latency-cell`);
-                    if (latencyCell) {
-                        latencyCell.textContent = data.status === 'active' ? `${data.latency}ms` : '-';
-                    }
-                    
-                    // 更新错误次数
-                    const errorCountCell = document.querySelector(`#channel-${id} .error-count-cell`);
-                    if (errorCountCell) {
-                        if (data.status === 'error') {
-                            errorCountCell.innerHTML = `<span class="badge bg-warning">${data.error_count}</span>`;
-                        } else {
-                            errorCountCell.innerHTML = '<span>0</span>';
-                        }
-                    }
-                    
-                    // 更新检查时间
-                    const checkedAtCell = document.querySelector(`#channel-${id} .checked-at-cell`);
-                    if (checkedAtCell) {
-                        const now = new Date();
-                        checkedAtCell.textContent = now.toLocaleString('zh-CN', {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            second: '2-digit',
-                            hour12: false
-                        });
-                    }
-
-                    // 如果频道被删除，从列表中移除该行
-                    if (data.deleted) {
-                        const row = document.querySelector(`#channel-${id}`);
-                        if (row) {
-                            row.remove();
-                            // 显示删除提示
-                            showAlert('success', data.message);
-                        }
-                    }
-                } else {
-                    showAlert('danger', data.message);
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showAlert('danger', '检查失败，请稍后重试');
-            });
-    }
-
-    function showAlert(type, message) {
-        const alertDiv = document.createElement('div');
-        alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-        alertDiv.role = 'alert';
-        alertDiv.innerHTML = `
-            ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-        `;
-        
-        const container = document.querySelector('.container');
-        container.insertBefore(alertDiv, container.firstChild);
-        
-        // 5秒后自动关闭
-        setTimeout(() => {
-            alertDiv.remove();
-        }, 5000);
-    }
-
-    function checkSelected() {
-        const selectedCheckboxes = document.querySelectorAll('.channel-select:checked');
-        const selectedIds = Array.from(selectedCheckboxes).map(checkbox => checkbox.value);
-        
-        if (selectedIds.length === 0) {
-            showAlert('warning', '请先选择要检查的频道');
+        const selectedChannels = Array.from(document.querySelectorAll('.channel-select:checked')).map(cb => cb.value);
+        if (selectedChannels.length === 0) {
+            alert('请选择要删除的频道');
             return;
         }
         
-        // 显示进度条
-        const progressBar = document.querySelector('#checkProgressModal .progress-bar');
-        const progressDiv = document.querySelector('#checkProgressModal');
-        checkModal.show();
-        let completed = 0;
+        if (!confirm(`确定要删除选中的 ${selectedChannels.length} 个频道吗？`)) {
+            return;
+        }
         
-        // 逐个检查选中的频道
-        selectedIds.forEach((id, index) => {
-            setTimeout(() => {
-                fetch(`/admin/channels/check/${id}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        completed++;
-                        // 更新进度条
-                        const progress = Math.round((completed / selectedIds.length) * 100);
-                        progressBar.style.width = `${progress}%`;
-                        progressBar.textContent = `${progress}%`;
-                        document.getElementById('checkStatus').textContent = `正在检查：${completed}/${selectedIds.length}`;
-                        
-                        // 更新频道状态
-                        if (data.success) {
-                            updateChannelRow(id, data);
-                        }
-                        
-                        // 检查是否完成所有频道
-                        if (completed === selectedIds.length) {
-                            setTimeout(() => {
-                                checkModal.hide();
-                                showAlert('success', '所选频道检查完成');
-                            }, 1000);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        completed++;
-                        // 即使出错也更新进度
-                        const progress = Math.round((completed / selectedIds.length) * 100);
-                        progressBar.style.width = `${progress}%`;
-                        progressBar.textContent = `${progress}%`;
-                    });
-            }, index * 200); // 每个请求间隔200ms
+        fetch('/admin/channels/delete-multiple', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ids: selectedChannels })
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                location.reload();
+            } else {
+                alert(result.message);
+            }
+        })
+        .catch(error => {
+            console.error('删除频道失败:', error);
+            alert('删除频道失败');
         });
     }
 
-    function updateChannelRow(id, data) {
-        const row = document.querySelector(`#channel-${id}`);
-        if (!row) return;
+    function deleteAll() {
+        if (!confirm('确定要清空所有频道吗？此操作不可恢复！')) {
+            return;
+        }
         
-        // 更新状态
-        const statusIcon = row.querySelector('.status-icon');
-        if (statusIcon) {
-            let badgeClass = 'secondary';
-            let statusText = '未启用';
-            
-            if (data.status === 'active') {
-                badgeClass = 'success';
-                statusText = '正常';
-            } else if (data.status === 'error') {
-                badgeClass = 'danger';
-                statusText = '异常';
+        if (!confirm('再次确认：是否要删除所有频道？')) {
+            return;
+        }
+        
+        fetch('/admin/channels/delete-all', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
             }
-            
-            statusIcon.innerHTML = `<span class="badge bg-${badgeClass}">${statusText}</span>`;
-        }
-        
-        // 更新延迟
-        const latencyCell = row.querySelector('.latency-cell');
-        if (latencyCell) {
-            latencyCell.textContent = data.status === 'active' ? `${data.latency}ms` : '-';
-        }
-        
-        // 更新错误次数
-        const errorCountCell = row.querySelector('.error-count-cell');
-        if (errorCountCell) {
-            if (data.status === 'error') {
-                errorCountCell.innerHTML = `<span class="badge bg-warning">${data.error_count}</span>`;
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('网络请求失败');
+            }
+            return response.json();
+        })
+        .then(result => {
+            if (result.success) {
+                location.reload();
             } else {
-                errorCountCell.innerHTML = '<span>0</span>';
+                alert(result.message || '清空频道失败');
             }
-        }
-        
-        // 更新检查时间
-        const checkedAtCell = row.querySelector('.checked-at-cell');
-        if (checkedAtCell) {
-            const now = new Date();
-            checkedAtCell.textContent = now.toLocaleString('zh-CN', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false
-            });
-        }
-        
-        // 如果频道被删除，从列表中移除该行
-        if (data.deleted) {
-            row.remove();
-        }
-    }
-
-    function checkCurrentGroup() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const groupId = urlParams.get('group_id');
-        
-        startCheckTask('/admin/channels/check-all' + (groupId ? `?group_id=${groupId}` : ''));
-    }
-
-    function checkAll() {
-        startCheckTask('/admin/channels/check-all');
+        })
+        .catch(error => {
+            console.error('清空频道失败:', error);
+            alert('清空频道失败: ' + error.message);
+        });
     }
     </script>
 </body>
+</html> 
 </html> 

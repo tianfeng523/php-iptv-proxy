@@ -136,7 +136,7 @@ class Channel
     public function checkChannel($id)
     {
         try {
-            $settings = (new Settings())->getAllSettings();
+            $settings = Settings::getInstance()->get();
             $maxErrorCount = $settings['max_error_count'] ?? 3;
 
             $channel = $this->getChannel($id);
@@ -163,52 +163,47 @@ class Channel
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
 
-            // 根据HTTP状态码设置频道状态
-            $newStatus = ($httpCode >= 200 && $httpCode < 400) ? 'active' : 'error';
+            $status = ($httpCode >= 200 && $httpCode < 400) ? 'active' : 'error';
+            $errorCount = $channel['error_count'];
             
-            // 首先获取当前错误次数
-            $currentErrorCount = $channel['error_count'] ?? 0;
-            
-            // 计算新的错误次数
-            $newErrorCount = $newStatus === 'error' ? ($currentErrorCount + 1) : 0;
-            
-            // 更新状态、延时和错误次数
+            if ($status === 'error') {
+                $errorCount++;
+                if ($errorCount >= $maxErrorCount) {
+                    // 删除频道
+                    $this->deleteChannel($id);
+                    return [
+                        'success' => true,
+                        'deleted' => true,
+                        'message' => '频道已被自动删除（连续检查失败达到最大次数）'
+                    ];
+                }
+            } else {
+                $errorCount = 0;
+            }
+
+            // 更新频道状态
             $query = "UPDATE channels SET 
                      status = :status,
                      latency = :latency,
                      error_count = :error_count,
-                     checked_at = NOW()
+                     checked_at = NOW(),
+                     updated_at = NOW()
                      WHERE id = :id";
             
             $stmt = $this->db->prepare($query);
-            $params = [
-                ':status' => $newStatus,
+            $stmt->execute([
+                ':status' => $status,
                 ':latency' => $latency,
-                ':error_count' => $newErrorCount,
+                ':error_count' => $errorCount,
                 ':id' => $id
-            ];
-            $stmt->execute($params);
+            ]);
 
-            // 如果错误次数达到最大值，删除该频道
-            if ($newStatus === 'error' && $newErrorCount >= $maxErrorCount) {
-                $this->deleteChannel($id);
-                return [
-                    'success' => true,
-                    'deleted' => true,
-                    'message' => "频道已被自动删除（异常次数达到{$maxErrorCount}次）"
-                ];
-            }
-
-            // 获取更新后的频道信息
-            $updatedChannel = $this->getChannel($id);
-            
             return [
                 'success' => true,
-                'deleted' => false,
-                'status' => $newStatus,
+                'status' => $status,
                 'latency' => $latency,
-                'error_count' => $newErrorCount,
-                'checked_at' => $updatedChannel['checked_at']
+                'error_count' => $errorCount,
+                'checked_at' => date('Y-m-d H:i:s')
             ];
         } catch (\Exception $e) {
             error_log("Error checking channel {$id}: " . $e->getMessage());
@@ -805,14 +800,17 @@ class Channel
     public function getGroupStats()
     {
         try {
-            $query = "SELECT g.name, 
-                     COUNT(c.id) as total_channels,
-                     SUM(CASE WHEN c.status = 1 THEN 1 ELSE 0 END) as active_channels,
-                     SUM(CASE WHEN c.status = 0 THEN 1 ELSE 0 END) as error_channels,
+            $query = "SELECT 
+                     g.name as group_name,
+                     COUNT(*) as total,
+                     SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) as active,
+                     SUM(CASE WHEN c.status = 'error' THEN 1 ELSE 0 END) as error,
                      AVG(c.latency) as avg_latency
-                     FROM channel_groups g
-                     LEFT JOIN channels c ON g.id = c.group_id
-                     GROUP BY g.id, g.name";
+                     FROM channels c
+                     LEFT JOIN channel_groups g ON c.group_id = g.id
+                     GROUP BY g.id, g.name
+                     ORDER BY total DESC
+                     LIMIT 10";
             
             $stmt = $this->db->query($query);
             return $stmt->fetchAll(\PDO::FETCH_ASSOC);
@@ -825,19 +823,58 @@ class Channel
     public function getPerformanceStats()
     {
         try {
-            // 获取最近24小时的性能数据
+            // 获取最近24小时的性能数据，每小时一个点
             $query = "SELECT 
                      DATE_FORMAT(checked_at, '%Y-%m-%d %H:00:00') as hour,
                      COUNT(*) as total_checks,
                      AVG(latency) as avg_latency,
-                     SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as successful_checks
-                     FROM channels 
+                     SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as success_count,
+                     SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count
+                     FROM channels
                      WHERE checked_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
                      GROUP BY hour
                      ORDER BY hour ASC";
             
             $stmt = $this->db->query($query);
-            return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            $data = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            
+            // 确保24小时的数据都存在，没有数据的时间点填充0
+            $result = [];
+            $now = new \DateTime();
+            $start = new \DateTime('-24 hours');
+            
+            while ($start <= $now) {
+                $hour = $start->format('Y-m-d H:00:00');
+                $found = false;
+                
+                foreach ($data as $row) {
+                    if ($row['hour'] === $hour) {
+                        $result[] = [
+                            'hour' => $hour,
+                            'total_checks' => (int)$row['total_checks'],
+                            'avg_latency' => round((float)$row['avg_latency'], 2),
+                            'success_rate' => $row['total_checks'] > 0 
+                                ? round(($row['success_count'] / $row['total_checks']) * 100, 2)
+                                : 0
+                        ];
+                        $found = true;
+                        break;
+                    }
+                }
+                
+                if (!$found) {
+                    $result[] = [
+                        'hour' => $hour,
+                        'total_checks' => 0,
+                        'avg_latency' => 0,
+                        'success_rate' => 0
+                    ];
+                }
+                
+                $start->modify('+1 hour');
+            }
+            
+            return $result;
         } catch (\PDOException $e) {
             error_log("Error getting performance stats: " . $e->getMessage());
             return [];
