@@ -8,6 +8,7 @@ $currentPage = 'home';
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IPTV 代理系统</title>
     <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@5.15.4/css/all.min.css" rel="stylesheet">
     <style>
         .stats-card {
             height: 100%;
