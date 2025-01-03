@@ -26,22 +26,44 @@ class ProxyController
             return false;
         }
         
-        // 1. 使用ps命令检查进程
-        exec("ps -p $pid", $psOutput, $psReturnVar);
-        if ($psReturnVar !== 0) {
+        // Windows系统下的进程检查
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            // 使用tasklist命令检查进程
+            $cmd = "tasklist /FI \"PID eq $pid\" /NH";
+            exec($cmd, $output);
+            
+            // 检查输出中是否包含PID
+            foreach ($output as $line) {
+                if (strpos($line, (string)$pid) !== false) {
+                    // 检查端口占用
+                    $port = $this->config->get('proxy_port', '9260');
+                    $cmd = "netstat -ano | findstr :$port";
+                    exec($cmd, $netstatOutput);
+                    
+                    // 如果端口未被占用，进程可能正在停止中
+                    if (empty($netstatOutput)) {
+                        return false;
+                    }
+                    return true;
+                }
+            }
             return false;
+        } else {
+            // Linux系统的原有检查逻辑
+            exec("ps -p $pid", $psOutput, $psReturnVar);
+            if ($psReturnVar !== 0) {
+                return false;
+            }
+            
+            $port = $this->config->get('proxy_port', '9260');
+            exec("netstat -tnlp 2>/dev/null | grep :$port", $netstatOutput);
+            
+            if (empty($netstatOutput)) {
+                return false;
+            }
+            
+            return true;
         }
-        
-        // 2. 检查端口占用
-        $port = $this->config->get('proxy_port', '9260');
-        exec("netstat -tnlp 2>/dev/null | grep :$port", $netstatOutput);
-        
-        // 如果端口未被占用，进程可能正在停止中
-        if (empty($netstatOutput)) {
-            return false;
-        }
-        
-        return true;
     }
     
     private function sendJsonResponse($data)

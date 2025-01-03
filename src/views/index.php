@@ -211,7 +211,7 @@ $currentPage = 'home';
             </div>
         </div>
     </div>
-
+	<?php require __DIR__ . '/footer.php'; ?>
     <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
     <script>
     // 添加全局状态变量

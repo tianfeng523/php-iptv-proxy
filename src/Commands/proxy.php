@@ -24,12 +24,24 @@ function getPid() {
 function isRunning($pid) {
     if (!$pid) return false;
     
-    // 检查进程是否存在
+    // Windows系统
+    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+        $cmd = "tasklist /FI \"PID eq $pid\" /NH";
+        exec($cmd, $output);
+        
+        foreach ($output as $line) {
+            if (strpos($line, (string)$pid) !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    // Linux系统
     if (!@posix_kill($pid, 0)) {
         return false;
     }
     
-    // 检查进程的命令行，确保是我们的代理服务器进程
     $cmdline = @file_get_contents("/proc/$pid/cmdline");
     if ($cmdline === false) {
         return false;

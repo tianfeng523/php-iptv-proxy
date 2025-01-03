@@ -1,34 +1,108 @@
 <?php $currentPage = 'index'; ?>
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN" class="h-100">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>首页 - IPTV 代理系统</title>
-    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <title>首页 - IPTV 代理管理系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@5.15.4/css/all.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.css" rel="stylesheet">
 </head>
-<body>
-    <?php require __DIR__ . '/../../navbar.php'; ?>
+<body class="d-flex flex-column h-100">
+    <?php $currentPage = 'index'; ?>
+    <?php require __DIR__ . '/../navbar.php'; ?>
 
-    <div class="container-fluid mx-auto" style="width: 98%;">
-        <div class="row">
-            <div class="col-md-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0">代理服务器控制</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <button id="proxyControl" class="btn btn-primary" onclick="toggleProxy()">
-                                    <i class="fas fa-spinner fa-spin d-none"></i>
-                                    <span>正在加载...</span>
+    <div class="content-wrapper">
+        <div class="container-fluid py-3">
+            <!-- 系统状态卡片 -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h6 class="card-title text-muted mb-3">
+                                <i class="fas fa-server me-2"></i>代理服务
+                            </h6>
+                            <div class="d-flex align-items-center">
+                                <div class="flex-grow-1">
+                                    <h3 class="mb-0" id="proxyStatus">
+                                        <span class="badge bg-secondary">检查中...</span>
+                                    </h3>
+                                </div>
+                                <button class="btn btn-primary" id="toggleProxy" disabled>
+                                    <i class="fas fa-power-off me-1"></i>启动
                                 </button>
-                                <div id="proxyStatus" class="mt-2">
-                                    <span class="text-secondary">
-                                        <i class="fas fa-circle-notch fa-spin"></i> 正在获取状态...
-                                    </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h6 class="card-title text-muted mb-3">
+                                <i class="fas fa-tv me-2"></i>频道总数
+                            </h6>
+                            <div class="d-flex align-items-center">
+                                <div class="flex-grow-1">
+                                    <h3 class="mb-0" id="totalChannels">-</h3>
+                                </div>
+                                <a href="/admin/channels" class="btn btn-outline-primary">
+                                    <i class="fas fa-list me-1"></i>管理
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h6 class="card-title text-muted mb-3">
+                                <i class="fas fa-check-circle me-2"></i>活跃频道
+                            </h6>
+                            <div class="d-flex align-items-center">
+                                <h3 class="mb-0" id="activeChannels">-</h3>
+                                <small class="text-muted ms-2">(最近5分钟)</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h6 class="card-title text-muted mb-3">
+                                <i class="fas fa-exclamation-circle me-2"></i>错误频道
+                            </h6>
+                            <div class="d-flex align-items-center">
+                                <h3 class="mb-0" id="errorChannels">-</h3>
+                                <a href="/admin/channels" class="btn btn-outline-danger ms-auto">
+                                    <i class="fas fa-wrench me-1"></i>处理
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 图表和统计 -->
+            <div class="row">
+                <!-- 性能监控 -->
+                <div class="col-md-8 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3">性能监控</h5>
+                            <canvas id="performanceChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分组统计 -->
+                <div class="col-md-4 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title mb-3">分组统计</h5>
+                            <div id="groupStats" style="max-height: 300px; overflow-y: auto;">
+                                <div class="text-center text-muted py-3">
+                                    <i class="fas fa-spinner fa-spin me-2"></i>加载中...
                                 </div>
                             </div>
                         </div>
@@ -38,7 +112,10 @@
         </div>
     </div>
 
-    <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <?php require __DIR__ . '/../footer.php'; ?>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
     <script>
     let proxyStatus = false;
     
@@ -60,72 +137,19 @@
         }, 5000);
     }
     
-    // 更新按钮和状态显示
-    function updateProxyStatus(running, details = null) {
+    // 检查代理状态
+    async function checkProxyStatus() {
         const button = document.getElementById('proxyControl');
         const spinner = button.querySelector('.fa-spinner');
-        const text = button.querySelector('span');
         const statusDiv = document.getElementById('proxyStatus');
         
-        proxyStatus = running;
-        
-        // 更新按钮状态
-        if (running) {
-            button.className = 'btn btn-success';
-            text.textContent = '停止服务';
-            statusDiv.innerHTML = `
-                <span class="text-success">
-                    <i class="fas fa-circle"></i> 运行中
-                </span>
-            `;
-            
-            // 显示详细信息
-            if (details) {
-                let uptimeText = '';
-                if (details.uptime !== null) {
-                    const hours = Math.floor(details.uptime / 3600);
-                    const minutes = Math.floor((details.uptime % 3600) / 60);
-                    const seconds = details.uptime % 60;
-                    uptimeText = `${hours}小时${minutes}分${seconds}秒`;
-                }
-                
-                let memoryText = '';
-                if (details.memory !== null) {
-                    memoryText = (details.memory / (1024 * 1024)).toFixed(2) + ' MB';
-                }
-                
-                statusDiv.innerHTML += `
-                    <div class="small text-muted mt-2">
-                        <div><i class="fas fa-microchip"></i> PID: ${details.pid || '未知'}</div>
-                        <div><i class="fas fa-clock"></i> 运行时间: ${uptimeText || '未知'}</div>
-                        <div><i class="fas fa-memory"></i> 内存使用: ${memoryText || '未知'}</div>
-                        <div><i class="fas fa-network-wired"></i> 当前连接数: ${details.connections || 0}</div>
-                        <div><i class="fas fa-plug"></i> 监听端口: ${details.port || '9260'}</div>
-                    </div>
-                `;
-            }
-        } else {
-            button.className = 'btn btn-danger';
-            text.textContent = '启动服务';
-            statusDiv.innerHTML = `
-                <span class="text-danger">
-                    <i class="fas fa-circle"></i> 已停止
-                </span>
-            `;
-        }
-        
-        button.disabled = false;
-        spinner.classList.add('d-none');
-    }
-    
-    // 获取代理服务器状态
-    async function checkProxyStatus() {
         try {
             const response = await fetch('/admin/proxy/status');
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-            const text = await response.text(); // 先获取响应文本
+            
+            const text = await response.text();
             console.log('Status response:', text); // 调试输出
             
             try {
@@ -138,22 +162,48 @@
                     console.log('Updated proxyStatus:', proxyStatus); // 调试输出
                     
                     // 更新界面显示
-                    updateProxyStatus(result.data.running, result.data);
+                    if (proxyStatus) {
+                        button.className = 'btn btn-danger';
+                        button.querySelector('span').textContent = '停止服务';
+                        statusDiv.innerHTML = `
+                            <span class="text-success">
+                                <i class="fas fa-circle"></i> 运行中
+                            </span>
+                            <div class="mt-2 small">
+                                <div><i class="fas fa-clock"></i> 运行时间: ${formatUptime(result.data.uptime)}</div>
+                                <div><i class="fas fa-memory"></i> 内存使用: ${formatBytes(result.data.memory)}</div>
+                                <div><i class="fas fa-network-wired"></i> 当前连接数: ${result.data.connections}</div>
+                                <div><i class="fas fa-plug"></i> 监听端口: ${result.data.port}</div>
+                            </div>
+                        `;
+                    } else {
+                        button.className = 'btn btn-success';
+                        button.querySelector('span').textContent = '启动服务';
+                        statusDiv.innerHTML = `
+                            <span class="text-danger">
+                                <i class="fas fa-circle"></i> 已停止
+                            </span>
+                        `;
+                    }
                 } else {
-                    console.error('Invalid status response:', result);
-                    updateProxyStatus(false);
-                    showAlert('获取状态失败: ' + (result.message || '未知错误'), 'warning');
+                    throw new Error('Invalid status response');
                 }
             } catch (parseError) {
                 console.error('JSON parse error:', parseError);
                 console.error('Response text:', text);
                 updateProxyStatus(false);
-                showAlert('解析服务器响应失败', 'error');
             }
         } catch (error) {
             console.error('Fetch error:', error);
-            updateProxyStatus(false);
-            showAlert('无法连接到服务器', 'error');
+            // 如果检查失败，不要立即更新状态，而是保持当前状态
+            statusDiv.innerHTML = `
+                <span class="text-warning">
+                    <i class="fas fa-exclamation-triangle"></i> 状态检查失败
+                </span>
+            `;
+        } finally {
+            button.disabled = false;
+            spinner.classList.add('d-none');
         }
     }
     
@@ -167,9 +217,8 @@
         spinner.classList.remove('d-none');
         
         try {
-            // 根据当前状态决定是启动还是停止
             const action = proxyStatus ? 'stop' : 'start';
-            console.log('Executing action:', action); // 调试输出
+            console.log('Executing action:', action);
             
             const response = await fetch('/admin/proxy/' + action, {
                 method: 'POST'
@@ -179,53 +228,54 @@
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             
-            const text = await response.text();
-            console.log('Action response:', text); // 调试输出
+            const result = await response.json();
+            console.log('Action response:', result);
             
-            try {
-                const result = JSON.parse(text);
-                console.log('Parsed result:', result); // 调试输出
-                
-                if (result.success) {
-                    // 等待一秒后再检查状态，给服务器一些时间来启动/停止
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    await checkProxyStatus();
-                    showAlert(result.message, 'success');
-                } else {
-                    // 如果操作失败，重新检查状态
-                    await checkProxyStatus();
-                    showAlert(result.message || '操作失败', 'warning');
-                }
-            } catch (parseError) {
-                console.error('JSON parse error:', parseError);
-                console.error('Response text:', text);
-                // 发生错误时也要重新检查状态
+            if (result.success) {
+                // 等待更长时间后再检查状态
+                await new Promise(resolve => setTimeout(resolve, 2000));
                 await checkProxyStatus();
-                showAlert('解析服务器响应失败', 'error');
+                showAlert(result.message, 'success');
+            } else {
+                throw new Error(result.message || '操作失败');
             }
         } catch (error) {
-            console.error('Fetch error:', error);
-            // 发生错误时也要重新检查状态
+            console.error('Error:', error);
+            showAlert(error.message || '操作失败', 'error');
+            // 发生错误时重新检查状态
             await checkProxyStatus();
-            showAlert('操作失败: ' + error.message, 'error');
-        } finally {
-            // 恢复按钮状态
-            button.disabled = false;
-            spinner.classList.add('d-none');
         }
+    }
+    
+    // 格式化运行时间
+    function formatUptime(seconds) {
+        if (!seconds) return '未知';
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const parts = [];
+        if (days > 0) parts.push(`${days}天`);
+        if (hours > 0) parts.push(`${hours}小时`);
+        if (minutes > 0) parts.push(`${minutes}分钟`);
+        return parts.join(' ') || '刚刚启动';
+    }
+    
+    // 格式化字节数
+    function formatBytes(bytes) {
+        if (!bytes) return '未知';
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${sizes[i]}`;
     }
     
     // 页面加载时获取状态
     document.addEventListener('DOMContentLoaded', () => {
-        console.log('Page loaded, checking initial status'); // 调试输出
+        console.log('Page loaded, checking initial status');
         checkProxyStatus();
+        
+        // 每5秒检查一次状态
+        setInterval(checkProxyStatus, 5000);
     });
-    
-    // 定期刷新状态（每5秒）
-    setInterval(() => {
-        console.log('Periodic status check'); // 调试输出
-        checkProxyStatus();
-    }, 5000);
     </script>
 </body>
 </html> 

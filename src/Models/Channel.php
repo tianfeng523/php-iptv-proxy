@@ -708,7 +708,8 @@ class Channel
     {
         // 生成唯一的代理路径
         $uniqueId = uniqid('ch_', true);
-        return '/proxy/' . $uniqueId;
+        // 统一使用 stream.m3u8 作为结尾
+        return '/proxy/' . $uniqueId . '/stream.m3u8';
     }
 
     public function getChannel($id)

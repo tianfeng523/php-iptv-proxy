@@ -347,8 +347,13 @@ class ChannelController
     {
         // 生成唯一的代理路径
         $uniqueId = uniqid('ch_', true);
-        // 返回代理地址
-        return '/proxy/' . $uniqueId;
+        // 从源URL中提取文件扩展名
+        $extension = pathinfo(parse_url($sourceUrl, PHP_URL_PATH), PATHINFO_EXTENSION);
+        if (empty($extension)) {
+            $extension = 'm3u8'; // 默认扩展名
+        }
+        // 返回标准格式的代理地址
+        return '/proxy/' . $uniqueId . '/stream.' . $extension;
     }
 
     public function showImport()

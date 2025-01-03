@@ -193,12 +193,29 @@ class Server
         $method = $firstLine[0];
         $path = parse_url($firstLine[1], PHP_URL_PATH);
         
+        $this->logger->info("收到请求: $method $path");
+        
+        // 从路径中提取频道ID和请求类型
+        if (preg_match('/^\/proxy\/(ch_[^\/]+)\/([^\/]+)$/', $path, $matches)) {
+            $channelId = $matches[1];
+            $requestFile = $matches[2];
+            $this->logger->info("提取到频道ID: $channelId, 请求文件: $requestFile");
+        } else {
+            $this->logger->error("无效的URL格式: $path");
+            $response = "HTTP/1.1 404 Not Found\r\n";
+            $response .= "Content-Type: text/plain\r\n";
+            $response .= "Connection: close\r\n\r\n";
+            $response .= "Invalid channel URL format";
+            @fwrite($client, $response);
+            $this->removeClient($client);
+            return;
+        }
+        
         // 查找对应的频道
-        $channelId = trim($path, '/');
         $channel = $this->findChannel($channelId);
         
         if (!$channel) {
-            // 返回 404
+            $this->logger->error("未找到频道: $channelId");
             $response = "HTTP/1.1 404 Not Found\r\n";
             $response .= "Content-Type: text/plain\r\n";
             $response .= "Connection: close\r\n\r\n";
@@ -208,13 +225,27 @@ class Server
             return;
         }
         
-        // 开始代理流媒体内容
-        $this->proxyStream($client, $channel);
+        $this->logger->info("找到频道: {$channel['name']} (ID: {$channel['id']})");
+        
+        // 根据请求类型选择不同的处理方式
+        if ($requestFile === 'stream.m3u8') {
+            $this->proxyM3U8($client, $channel);
+        } else if (preg_match('/\.ts$/', $requestFile)) {
+            $this->proxyTS($client, $channel, $requestFile);
+        } else {
+            $this->logger->error("不支持的文件类型: $requestFile");
+            $response = "HTTP/1.1 400 Bad Request\r\n";
+            $response .= "Content-Type: text/plain\r\n";
+            $response .= "Connection: close\r\n\r\n";
+            $response .= "Unsupported file type";
+            @fwrite($client, $response);
+            $this->removeClient($client);
+        }
     }
     
-    private function proxyStream($client, $channel)
+    private function proxyM3U8($client, $channel)
     {
-        // 打开源流
+        // 获取原始m3u8内容
         $context = stream_context_create([
             'http' => [
                 'timeout' => $this->config->get('proxy_timeout', 10),
@@ -222,60 +253,118 @@ class Server
             ]
         ]);
         
-        $source = @fopen($channel['source_url'], 'r', false, $context);
-        if (!$source) {
-            $this->logger->error("无法打开源流: " . $channel['source_url']);
+        $content = @file_get_contents($channel['source_url'], false, $context);
+        if ($content === false) {
+            $this->logger->error("无法获取m3u8内容: " . $channel['source_url']);
             $this->removeClient($client);
             return;
         }
         
-        // 发送 HTTP 头
+        // 输出原始m3u8内容中的TS地址
+        preg_match_all('/^(.*\.ts.*)$/m', $content, $matches);
+        if (!empty($matches[0])) {
+            $this->logger->info("原始m3u8中的TS地址: " . implode(', ', $matches[0]));
+        }
+        
+        // 修改m3u8内容中的ts文件路径
+        $baseUrl = dirname($channel['proxy_url']);
+        $content = preg_replace_callback('/^(.*\.ts.*)$/m', function($matches) use ($baseUrl) {
+            $tsFile = basename($matches[0]);
+            $proxyPath = $baseUrl . '/' . $tsFile;
+            $this->logger->info("转换后的TS地址: " . $proxyPath);
+            return $proxyPath;
+        }, $content);
+        
+        // 发送响应
         $response = "HTTP/1.1 200 OK\r\n";
-        $response .= "Content-Type: application/octet-stream\r\n";
+        $response .= "Content-Type: application/vnd.apple.mpegurl\r\n";
+        $response .= "Access-Control-Allow-Origin: *\r\n";
+        $response .= "Cache-Control: no-cache\r\n";
+        $response .= "Content-Length: " . strlen($content) . "\r\n";
         $response .= "Connection: close\r\n\r\n";
+        $response .= $content;
+        
         @fwrite($client, $response);
+        $this->removeClient($client);
+    }
+    
+    private function proxyTS($client, $channel, $tsFile)
+    {
+        // 从原始m3u8中获取完整的ts文件路径
+        $context = stream_context_create([
+            'http' => [
+                'timeout' => $this->config->get('proxy_timeout', 10),
+                'user_agent' => 'PHP IPTV Proxy'
+            ]
+        ]);
         
-        // 设置流为非阻塞模式
-        stream_set_blocking($source, false);
+        // 获取原始m3u8内容
+        $content = @file_get_contents($channel['source_url'], false, $context);
+        if ($content === false) {
+            $this->logger->error("无法获取m3u8内容: " . $channel['source_url']);
+            $this->removeClient($client);
+            return;
+        }
         
-        // 转发流内容
-        $buffer = '';
-        while (!feof($source) && $this->isRunning) {
-            $data = @fread($source, 8192);
-            if ($data === false) {
-                break;
+        // 在原始m3u8内容中查找完整的ts文件URL
+        $tsBaseName = pathinfo($tsFile, PATHINFO_FILENAME);
+        if (preg_match('/' . preg_quote($tsBaseName, '/') . '.*\.ts[^\n]*/i', $content, $matches)) {
+            $tsFullPath = $matches[0];
+            $sourceUrl = dirname($channel['source_url']) . '/' . $tsFullPath;
+            $this->logger->info("尝试访问的TS文件URL（带参数）: " . $sourceUrl);
+            
+            // 打开源流
+            $source = @fopen($sourceUrl, 'r', false, $context);
+            if (!$source) {
+                $this->logger->error("无法打开TS文件: $sourceUrl");
+                $this->removeClient($client);
+                return;
             }
             
-            $buffer .= $data;
+            // 发送 HTTP 头
+            $response = "HTTP/1.1 200 OK\r\n";
+            $response .= "Content-Type: video/mp2t\r\n";
+            $response .= "Access-Control-Allow-Origin: *\r\n";
+            $response .= "Cache-Control: no-cache\r\n";
+            $response .= "Connection: close\r\n\r\n";
+            @fwrite($client, $response);
             
-            // 当缓冲区达到一定大小时写入
-            if (strlen($buffer) >= 8192) {
-                $written = @fwrite($client, $buffer);
+            // 设置流为非阻塞模式
+            stream_set_blocking($source, false);
+            
+            // 转发流内容
+            while (!feof($source) && $this->isRunning) {
+                $data = @fread($source, 8192);
+                if ($data === false) {
+                    break;
+                }
+                
+                $written = @fwrite($client, $data);
                 if ($written === false) {
                     break;
                 }
-                $buffer = '';
+                
+                // 避免 CPU 占用过高
+                usleep(1000);
             }
             
-            // 避免 CPU 占用过高
-            usleep(1000);
+            // 清理
+            @fclose($source);
+        } else {
+            $this->logger->error("在m3u8中未找到对应的TS文件: $tsFile");
         }
         
-        // 写入剩余的缓冲区数据
-        if ($buffer !== '') {
-            @fwrite($client, $buffer);
-        }
-        
-        // 清理
-        @fclose($source);
         $this->removeClient($client);
     }
     
     private function findChannel($channelId)
     {
         foreach ($this->channels as $channel) {
-            if ($channel['id'] == $channelId) {
-                return $channel;
+            // 从代理URL中提取频道ID
+            if (preg_match('/^\/proxy\/(ch_[^\/]+)\//', $channel['proxy_url'], $matches)) {
+                if ($matches[1] === $channelId) {
+                    return $channel;
+                }
             }
         }
         return null;
