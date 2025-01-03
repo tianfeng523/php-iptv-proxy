@@ -19,6 +19,32 @@ try {
             $controller->index();
             break;
 
+        // 代理服务器相关路由
+        case '/admin/proxy/status':
+            $controller = new \App\Controllers\ProxyController();
+            $controller->status();
+            break;
+
+        case '/admin/proxy/start':
+            if ($method === 'POST') {
+                $controller = new \App\Controllers\ProxyController();
+                $controller->start();
+            } else {
+                http_response_code(405);
+                echo 'Method Not Allowed';
+            }
+            break;
+
+        case '/admin/proxy/stop':
+            if ($method === 'POST') {
+                $controller = new \App\Controllers\ProxyController();
+                $controller->stop();
+            } else {
+                http_response_code(405);
+                echo 'Method Not Allowed';
+            }
+            break;
+
         case '/admin/channels':
             $controller = new \App\Controllers\ChannelController();
             $controller->index();

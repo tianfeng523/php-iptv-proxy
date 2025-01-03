@@ -1,3 +1,4 @@
+<?php $currentPage = 'settings'; ?>
 <!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -8,7 +9,6 @@
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@5.15.4/css/all.min.css" rel="stylesheet">
 </head>
 <body>
-    <?php $currentPage = 'settings'; ?>
     <?php require __DIR__ . '/../../navbar.php'; ?>
 
     <div class="container-fluid mx-auto" style="width: 98%;">
@@ -22,7 +22,53 @@
                     <?php unset($_SESSION['flash_message']); ?>
                 <?php endif; ?>
 
-                <form method="post" action="/admin/settings/save" class="mt-4">
+                <form id="settingsForm" method="post" action="/admin/settings/save" class="mt-4">
+                    <!-- 基本设置 -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h5 class="mb-0">基本设置</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">站点名称</label>
+                                <input type="text" class="form-control" name="site_name" value="<?= htmlspecialchars($settings['site_name'] ?? '') ?>">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">最大错误次数</label>
+                                <input type="number" class="form-control" name="max_error_count" value="<?= intval($settings['max_error_count'] ?? 3) ?>">
+                                <small class="text-muted">频道检测失败达到此次数后将被自动删除</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 代理服务器设置 -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h5 class="mb-0">代理服务器设置</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">监听地址</label>
+                                <input type="text" class="form-control" name="proxy_host" value="<?= htmlspecialchars($settings['proxy_host'] ?? '0.0.0.0') ?>">
+                                <small class="text-muted">默认 0.0.0.0 表示监听所有网卡</small>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">监听端口</label>
+                                <input type="number" class="form-control" name="proxy_port" value="<?= intval($settings['proxy_port'] ?? 8081) ?>">
+                                <small class="text-muted">建议使用大于 1024 的端口</small>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">连接超时时间（秒）</label>
+                                <input type="number" class="form-control" name="proxy_timeout" value="<?= intval($settings['proxy_timeout'] ?? 10) ?>">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">缓冲区大小（字节）</label>
+                                <input type="number" class="form-control" name="proxy_buffer_size" value="<?= intval($settings['proxy_buffer_size'] ?? 8192) ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 缓存设置 -->
                     <div class="card mb-4">
                         <div class="card-header">
                             <h5 class="mb-0">缓存设置</h5>
@@ -39,6 +85,7 @@
                         </div>
                     </div>
 
+                    <!-- Redis 设置 -->
                     <div class="card mb-4">
                         <div class="card-header">
                             <h5 class="mb-0">Redis 设置</h5>
@@ -59,6 +106,7 @@
                         </div>
                     </div>
 
+                    <!-- 监控设置 -->
                     <div class="card mb-4">
                         <div class="card-header">
                             <h5 class="mb-0">监控设置</h5>
@@ -69,9 +117,15 @@
                                 <input type="number" name="monitor_refresh_interval" class="form-control" value="<?= $settings['monitor_refresh_interval'] ?? 5 ?>">
                                 <div class="form-text">设置监控页面自动刷新的时间间隔</div>
                             </div>
+                            <div class="mb-3">
+                                <label class="form-label">服务状态检查间隔（秒）</label>
+                                <input type="number" name="status_check_interval" class="form-control" value="<?= $settings['status_check_interval'] ?? 10 ?>">
+                                <div class="form-text">设置检查代理服务运行状态的时间间隔</div>
+                            </div>
                         </div>
                     </div>
 
+                    <!-- 频道检查设置 -->
                     <div class="card mb-4">
                         <div class="card-header">
                             <h5 class="mb-0">频道检查设置</h5>
@@ -107,7 +161,9 @@
                         </div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary">保存设置</button>
+                    <div class="text-end">
+                        <button type="submit" class="btn btn-primary">保存设置</button>
+                    </div>
                 </form>
             </div>
         </div>
@@ -131,6 +187,38 @@
 
         // 初始化显示状态
         updateVisibility();
+    });
+
+    // AJAX 提交表单
+    document.getElementById('settingsForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(this);
+        const data = {};
+        for (let [key, value] of formData.entries()) {
+            data[key] = value;
+        }
+        
+        fetch('/admin/settings/save', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('设置已保存');
+                location.reload();
+            } else {
+                alert(data.message || '保存失败');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('保存失败');
+        });
     });
     </script>
 </body>
