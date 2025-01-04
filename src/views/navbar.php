@@ -34,7 +34,7 @@
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?= $currentPage === 'error_logs' ? 'active' : '' ?>" href="/admin/monitor/logs">
+                    <a class="nav-link <?= $currentPage === 'error_logs' ? 'active' : '' ?>" href="/admin/error-logs">
                         <i class="fas fa-exclamation-triangle me-1"></i>错误日志
                     </a>
                 </li>

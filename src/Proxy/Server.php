@@ -2,6 +2,7 @@
 namespace App\Proxy;
 
 use App\Models\Channel;
+use App\Models\ErrorLog;
 use App\Core\Logger;
 use App\Core\Config;
 
@@ -13,25 +14,65 @@ class Server
     private $socket;
     private $clients = [];
     private $channels = [];
+    private $db;
+    private $errorLog;
     
     public function __construct()
     {
         $this->logger = new Logger();
         $this->config = Config::getInstance();
         $this->loadChannels();
+        $this->db = \App\Core\Database::getInstance()->getConnection();
+        $this->errorLog = new ErrorLog();
+    }
+    
+    private function logError($message, $level = 'error', $file = null, $line = null)
+    {
+        // 获取调用堆栈
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+        array_shift($trace); // 移除当前方法的堆栈
+        
+        // 如果没有提供文件和行号，使用调用者的信息
+        if ($file === null && !empty($trace[0]['file'])) {
+            $file = $trace[0]['file'];
+        }
+        if ($line === null && !empty($trace[0]['line'])) {
+            $line = $trace[0]['line'];
+        }
+        
+        // 记录到错误日志数据库
+        try {
+            $this->errorLog->add([
+                'level' => $level,
+                'message' => $message,
+                'file' => $file,
+                'line' => $line,
+                'trace' => json_encode($trace, JSON_UNESCAPED_UNICODE)
+            ]);
+        } catch (\Exception $e) {
+            // 如果记录错误日志失败，至少要记录到系统日志
+            error_log("Error logging to database: " . $e->getMessage());
+        }
+        
+        // 同时记录到系统日志
+        $this->logger->$level($message);
     }
     
     private function loadChannels()
     {
-        $channelModel = new Channel();
-        $result = $channelModel->getChannelList(1, 1000); // 获取前1000个频道
-        $this->channels = $result['channels'];
+        try {
+            $channelModel = new Channel();
+            $result = $channelModel->getChannelList(1, 1000); // 获取前1000个频道
+            $this->channels = $result['channels'];
+        } catch (\Exception $e) {
+            $this->logError("加载频道列表失败: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+        }
     }
     
     public function start()
     {
         if ($this->isRunning) {
-            $this->logger->error("代理服务器已经在运行中");
+            //$this->logError("代理服务器已经在运行中", 'warning');
             return false;
         }
         
@@ -40,101 +81,48 @@ class Server
             $address = $this->config->get('proxy_host', '0.0.0.0');
             $port = $this->config->get('proxy_port', 8080);
             
-            $this->logger->info("正在启动代理服务器...");
-            $this->logger->info("配置信息: 地址=$address, 端口=$port");
+            $this->logError("正在启动代理服务器...", 'info', __FILE__, __LINE__);
             
-            // 尝试创建服务器 socket
-            $this->socket = @stream_socket_server("tcp://$address:$port", $errno, $errstr);
+            $this->socket = stream_socket_server("tcp://{$address}:{$port}", $errno, $errstr);
             if (!$this->socket) {
-                $this->logger->error("无法启动代理服务器: $errstr ($errno)");
-                if ($errno == 98 || $errno == 10048) { // Linux 和 Windows 的端口占用错误码
-                    $this->logger->error("端口 $port 已被占用，请检查是否有其他实例在运行");
-                }
+                $this->logError("创建服务器失败: {$errstr} ({$errno})", 'error', __FILE__, __LINE__);
                 return false;
             }
             
-            // 设置 socket 选项
-            if (function_exists('socket_set_option')) {
-                $socket = socket_import_stream($this->socket);
-                if ($socket) {
-                    socket_set_option($socket, SOL_SOCKET, SO_REUSEADDR, 1);
-                    $this->logger->info("已设置 socket 选项: SO_REUSEADDR");
-                }
-            }
-            
-            // 设置非阻塞模式
-            stream_set_blocking($this->socket, false);
-            $this->logger->info("已设置非阻塞模式");
-            
-            // 加载频道信息
-            $this->loadChannels();
-            $this->logger->info("已加载频道列表，共 " . count($this->channels) . " 个频道");
-            
             $this->isRunning = true;
-            $this->logger->info("代理服务器已启动 - 监听 $address:$port");
+            $this->logError("代理服务器已启动: {$address}:{$port}", 'info', __FILE__, __LINE__);
             
-            // 注册信号处理器
-            if (function_exists('pcntl_signal')) {
-                pcntl_signal(SIGTERM, function($signo) {
-                    $this->logger->info("收到 SIGTERM 信号，准备停止服务器");
-                    $this->stop();
-                });
-                pcntl_signal(SIGINT, function($signo) {
-                    $this->logger->info("收到 SIGINT 信号，准备停止服务器");
-                    $this->stop();
-                });
-                $this->logger->info("已注册信号处理器");
-            }
-            
-            // 主循环
-            $lastCheck = time();
-            $checkInterval = 60; // 每分钟检查一次
-            
-            $this->logger->info("进入主循环");
-            while ($this->isRunning) {
-                try {
-                    // 处理信号
-                    if (function_exists('pcntl_signal_dispatch')) {
-                        pcntl_signal_dispatch();
-                    }
-                    
-                    // 处理连接
-                    $this->processConnections();
-                    
-                    // 定期检查和日志记录
-                    $now = time();
-                    if ($now - $lastCheck >= $checkInterval) {
-                        $this->logger->info("服务器运行状态: " . 
-                            "客户端数=" . count($this->clients) . ", " .
-                            "频道数=" . count($this->channels));
-                        $lastCheck = $now;
-                    }
-                    
-                } catch (\Exception $e) {
-                    $this->logger->error("主循环中发生错误: " . $e->getMessage());
-                    $this->logger->error("错误堆栈: " . $e->getTraceAsString());
-                }
-                
-                // 避免 CPU 占用过高
-                usleep(10000); // 10ms 延迟
-            }
-            
-            $this->logger->info("主循环结束");
             return true;
-            
         } catch (\Exception $e) {
-            $this->logger->error("启动代理服务器时发生错误: " . $e->getMessage());
-            $this->logger->error("错误堆栈: " . $e->getTraceAsString());
-            $this->stop();
+            $this->logError("启动代理服务器失败: " . $e->getMessage(), 'error', __FILE__, __LINE__);
             return false;
         }
+    }
+    
+    private function handleClientError($client, $message, $level = 'error')
+    {
+        $clientId = (int)$client;
+        $clientIp = stream_socket_get_name($client, true);
+        $channelId = $this->clients[$clientId]['channel_id'] ?? null;
+        
+        $errorMessage = sprintf(
+            "客户端错误 [IP: %s, Channel: %s]: %s",
+            $clientIp,
+            $channelId ? "#{$channelId}" : 'Unknown',
+            $message
+        );
+        
+        $this->logError($errorMessage, $level, __FILE__, __LINE__);
     }
     
     private function processConnections()
     {
         try {
             // 准备 socket 数组用于 select
-            $read = $this->clients;
+            $read = [];
+            foreach ($this->clients as $clientInfo) {
+                $read[] = $clientInfo['socket'];
+            }
             $read[] = $this->socket;
             $write = null;
             $except = null;
@@ -146,10 +134,12 @@ class Server
                     $client = @stream_socket_accept($this->socket);
                     if ($client) {
                         stream_set_blocking($client, false);
-                        $this->clients[] = $client;
                         $clientId = (int)$client;
+                        $this->clients[$clientId] = [
+                            'socket' => $client
+                        ];
                         $clientIp = stream_socket_get_name($client, true);
-                        $this->logger->info("新客户端连接 (ID: $clientId, IP: $clientIp)");
+                        //$this->logError("新客户端连接 (ID: $clientId, IP: $clientIp)", 'info', __FILE__, __LINE__);
                     }
                     unset($read[array_search($this->socket, $read)]);
                 }
@@ -167,15 +157,121 @@ class Server
                         $this->handleRequest($client, $data);
                     } catch (\Exception $e) {
                         $clientId = (int)$client;
-                        $this->logger->error("处理客户端请求时发生错误 (ID: $clientId): " . $e->getMessage());
-                        $this->logger->error("错误堆栈: " . $e->getTraceAsString());
+                        $this->logError("处理客户端请求时发生错误 (ID: $clientId): " . $e->getMessage(), 'error', __FILE__, __LINE__);
+                        $this->logError("错误堆栈: " . $e->getTraceAsString(), 'error', __FILE__, __LINE__);
                         $this->removeClient($client);
                     }
                 }
             }
         } catch (\Exception $e) {
-            $this->logger->error("处理连接时发生错误: " . $e->getMessage());
-            $this->logger->error("错误堆栈: " . $e->getTraceAsString());
+            $this->logError("处理连接时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+            $this->logError("错误堆栈: " . $e->getTraceAsString(), 'error', __FILE__, __LINE__);
+        }
+    }
+    
+    private function recordConnection($client, $channelId)
+    {
+        try {
+            $clientId = (int)$client;
+            $clientIp = stream_socket_get_name($client, true);
+            $userAgent = '-';
+            $sessionId = md5($clientId . $clientIp . microtime(true));
+            
+            // 先清理可能存在的旧连接记录
+            $stmt = $this->db->prepare("UPDATE channel_connections 
+                SET status = 'disconnected', 
+                    disconnect_time = NOW() 
+                WHERE client_ip = ? 
+                AND channel_id = ? 
+                AND status = 'active'");
+            $stmt->execute([$clientIp, $channelId]);
+            
+            // 等待一小段时间确保更新完成
+            usleep(100000); // 100ms
+            
+            // 记录新连接
+            $stmt = $this->db->prepare("INSERT INTO channel_connections 
+                (channel_id, client_ip, user_agent, session_id, connect_time, last_active_time, status) 
+                VALUES (?, ?, ?, ?, NOW(), NOW(), 'active')");
+            $stmt->execute([$channelId, $clientIp, $userAgent, $sessionId]);
+            
+            // 存储session_id到clients数组中
+            if (!isset($this->clients[$clientId])) {
+                $this->clients[$clientId] = ['socket' => $client];
+            }
+            $this->clients[$clientId]['session_id'] = $sessionId;
+            $this->clients[$clientId]['channel_id'] = $channelId;
+            
+            //$this->logError("新连接已记录: IP=$clientIp, Channel=$channelId, Session=$sessionId", 'info', __FILE__, __LINE__);
+            
+            // 更新连接状态
+            $this->updateConnectionStatus($client);
+        } catch (\Exception $e) {
+            $this->logError("记录连接信息时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+            $this->logError("错误堆栈: " . $e->getTraceAsString(), 'error', __FILE__, __LINE__);
+            // 继续处理请求，不要因为记录失败而中断服务
+        }
+    }
+    
+    private function updateConnectionStatus($client)
+    {
+        try {
+            $clientId = (int)$client;
+            if (isset($this->clients[$clientId]['session_id'])) {
+                $sessionId = $this->clients[$clientId]['session_id'];
+                
+                // 更新最后活跃时间
+                $stmt = $this->db->prepare("UPDATE channel_connections 
+                    SET last_active_time = NOW(), status = 'active' 
+                    WHERE session_id = ?");
+                $stmt->execute([$sessionId]);
+                
+                //$this->logError("更新连接状态: Session=$sessionId", 'info', __FILE__, __LINE__);
+            }
+        } catch (\Exception $e) {
+            $this->logError("更新连接状态时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+            $this->logError("错误堆栈: " . $e->getTraceAsString(), 'error', __FILE__, __LINE__);
+        }
+    }
+    
+    private function closeConnection($client)
+    {
+        try {
+            $clientId = (int)$client;
+            if (isset($this->clients[$clientId]['session_id'])) {
+                $sessionId = $this->clients[$clientId]['session_id'];
+                
+                // 标记连接为断开，并记录断开时间
+                $stmt = $this->db->prepare("UPDATE channel_connections 
+                    SET status = 'disconnected', 
+                        disconnect_time = NOW() 
+                    WHERE session_id = ? 
+                    AND status = 'active'");
+                $stmt->execute([$sessionId]);
+                
+                //$this->logError("连接已断开: Session=$sessionId", 'info', __FILE__, __LINE__);
+            }
+        } catch (\Exception $e) {
+            $this->logError("关闭连接时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+            $this->logError("错误堆栈: " . $e->getTraceAsString(), 'error', __FILE__, __LINE__);
+        }
+    }
+    
+    private function cleanInactiveConnections()
+    {
+        try {
+            // 将超过1分钟未活跃的连接标记为断开
+            $stmt = $this->db->prepare("UPDATE channel_connections 
+                SET status = 'disconnected',
+                    disconnect_time = NOW() 
+                WHERE status = 'active' 
+                AND last_active_time < DATE_SUB(NOW(), INTERVAL 1 MINUTE)");
+            $stmt->execute();
+            
+            //$this->logError("已清理不活跃连接", 'info', __FILE__, __LINE__);
+        } catch (\Exception $e) {
+            $this->logError("清理不活跃连接时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+            $this->logError("错误堆栈: " . $e->getTraceAsString(), 'error', __FILE__, __LINE__);
         }
     }
     
@@ -193,15 +289,75 @@ class Server
         $method = $firstLine[0];
         $path = parse_url($firstLine[1], PHP_URL_PATH);
         
-        $this->logger->info("收到请求: $method $path");
+        // 获取User-Agent
+        $userAgent = '-';
+        foreach ($lines as $line) {
+            if (stripos($line, 'User-Agent:') === 0) {
+                $userAgent = trim(substr($line, 11));
+                break;
+            }
+        }
+        
+        //$this->logError("收到请求: $method $path", 'info', __FILE__, __LINE__);
         
         // 从路径中提取频道ID和请求类型
         if (preg_match('/^\/proxy\/(ch_[^\/]+)\/([^\/]+)$/', $path, $matches)) {
             $channelId = $matches[1];
             $requestFile = $matches[2];
-            $this->logger->info("提取到频道ID: $channelId, 请求文件: $requestFile");
+            //$this->logError("提取到频道ID: $channelId, 请求文件: $requestFile", 'info', __FILE__, __LINE__);
+            
+            // 查找对应的频道
+            $channel = $this->findChannel($channelId);
+            
+            if (!$channel) {
+                $this->logError("未找到频道: $channelId", 'error', __FILE__, __LINE__);
+                $response = "HTTP/1.1 404 Not Found\r\n";
+                $response .= "Content-Type: text/plain\r\n";
+                $response .= "Connection: close\r\n\r\n";
+                $response .= "Channel not found";
+                @fwrite($client, $response);
+                $this->removeClient($client);
+                return;
+            }
+            
+            //$this->logError("找到频道: {$channel['name']} (ID: {$channel['id']})", 'info', __FILE__, __LINE__);
+            
+            // 只在请求m3u8文件时记录连接
+            if ($requestFile === 'stream.m3u8') {
+                $this->recordConnection($client, $channel['id']);
+                
+                // 更新客户端的User-Agent
+                $clientId = (int)$client;
+                if (isset($this->clients[$clientId]['session_id'])) {
+                    $stmt = $this->db->prepare("UPDATE channel_connections 
+                        SET user_agent = ? 
+                        WHERE session_id = ? AND status = 'active'");
+                    $stmt->execute([$userAgent, $this->clients[$clientId]['session_id']]);
+                }
+            } else if (preg_match('/\.ts$/', $requestFile)) {
+                // 对于ts文件请求，只更新最后活跃时间
+                $clientId = (int)$client;
+                if (isset($this->clients[$clientId]['session_id'])) {
+                    $this->updateConnectionStatus($client);
+                }
+            }
+            
+            // 根据请求类型选择不同的处理方式
+            if ($requestFile === 'stream.m3u8') {
+                $this->proxyM3U8($client, $channel);
+            } else if (preg_match('/\.ts$/', $requestFile)) {
+                $this->proxyTS($client, $channel, $requestFile);
+            } else {
+                $this->logError("不支持的文件类型: $requestFile", 'error', __FILE__, __LINE__);
+                $response = "HTTP/1.1 400 Bad Request\r\n";
+                $response .= "Content-Type: text/plain\r\n";
+                $response .= "Connection: close\r\n\r\n";
+                $response .= "Unsupported file type";
+                @fwrite($client, $response);
+                $this->removeClient($client);
+            }
         } else {
-            $this->logger->error("无效的URL格式: $path");
+            $this->logError("无效的URL格式: $path", 'error', __FILE__, __LINE__);
             $response = "HTTP/1.1 404 Not Found\r\n";
             $response .= "Content-Type: text/plain\r\n";
             $response .= "Connection: close\r\n\r\n";
@@ -209,37 +365,6 @@ class Server
             @fwrite($client, $response);
             $this->removeClient($client);
             return;
-        }
-        
-        // 查找对应的频道
-        $channel = $this->findChannel($channelId);
-        
-        if (!$channel) {
-            $this->logger->error("未找到频道: $channelId");
-            $response = "HTTP/1.1 404 Not Found\r\n";
-            $response .= "Content-Type: text/plain\r\n";
-            $response .= "Connection: close\r\n\r\n";
-            $response .= "Channel not found";
-            @fwrite($client, $response);
-            $this->removeClient($client);
-            return;
-        }
-        
-        $this->logger->info("找到频道: {$channel['name']} (ID: {$channel['id']})");
-        
-        // 根据请求类型选择不同的处理方式
-        if ($requestFile === 'stream.m3u8') {
-            $this->proxyM3U8($client, $channel);
-        } else if (preg_match('/\.ts$/', $requestFile)) {
-            $this->proxyTS($client, $channel, $requestFile);
-        } else {
-            $this->logger->error("不支持的文件类型: $requestFile");
-            $response = "HTTP/1.1 400 Bad Request\r\n";
-            $response .= "Content-Type: text/plain\r\n";
-            $response .= "Connection: close\r\n\r\n";
-            $response .= "Unsupported file type";
-            @fwrite($client, $response);
-            $this->removeClient($client);
         }
     }
     
@@ -255,15 +380,9 @@ class Server
         
         $content = @file_get_contents($channel['source_url'], false, $context);
         if ($content === false) {
-            $this->logger->error("无法获取m3u8内容: " . $channel['source_url']);
+            $this->logError("无法获取m3u8内容: " . $channel['source_url'], 'error', __FILE__, __LINE__);
             $this->removeClient($client);
             return;
-        }
-        
-        // 输出原始m3u8内容中的TS地址
-        preg_match_all('/^(.*\.ts.*)$/m', $content, $matches);
-        if (!empty($matches[0])) {
-            $this->logger->info("原始m3u8中的TS地址: " . implode(', ', $matches[0]));
         }
         
         // 修改m3u8内容中的ts文件路径
@@ -271,7 +390,6 @@ class Server
         $content = preg_replace_callback('/^(.*\.ts.*)$/m', function($matches) use ($baseUrl) {
             $tsFile = basename($matches[0]);
             $proxyPath = $baseUrl . '/' . $tsFile;
-            $this->logger->info("转换后的TS地址: " . $proxyPath);
             return $proxyPath;
         }, $content);
         
@@ -285,7 +403,6 @@ class Server
         $response .= $content;
         
         @fwrite($client, $response);
-        $this->removeClient($client);
     }
     
     private function proxyTS($client, $channel, $tsFile)
@@ -301,7 +418,7 @@ class Server
         // 获取原始m3u8内容
         $content = @file_get_contents($channel['source_url'], false, $context);
         if ($content === false) {
-            $this->logger->error("无法获取m3u8内容: " . $channel['source_url']);
+            $this->logError("无法获取m3u8内容: " . $channel['source_url'], 'error', __FILE__, __LINE__);
             $this->removeClient($client);
             return;
         }
@@ -311,12 +428,12 @@ class Server
         if (preg_match('/' . preg_quote($tsBaseName, '/') . '.*\.ts[^\n]*/i', $content, $matches)) {
             $tsFullPath = $matches[0];
             $sourceUrl = dirname($channel['source_url']) . '/' . $tsFullPath;
-            $this->logger->info("尝试访问的TS文件URL（带参数）: " . $sourceUrl);
+            //$this->logError("尝试访问的TS文件URL（带参数）: " . $sourceUrl, 'info', __FILE__, __LINE__);
             
             // 打开源流
             $source = @fopen($sourceUrl, 'r', false, $context);
             if (!$source) {
-                $this->logger->error("无法打开TS文件: $sourceUrl");
+                $this->logError("无法打开TS文件: $sourceUrl", 'error', __FILE__, __LINE__);
                 $this->removeClient($client);
                 return;
             }
@@ -354,7 +471,13 @@ class Server
             // 清理
             @fclose($source);
         } else {
-            $this->logger->error("在m3u8中未找到对应的TS文件: $tsFile");
+            $this->logError("在m3u8中未找到对应的TS文件: $tsFile", 'error', __FILE__, __LINE__);
+        }
+        
+        // 更新连接状态
+        $clientId = (int)$client;
+        if (isset($this->clients[$clientId]['session_id'])) {
+            $this->updateConnectionStatus($client);
         }
         
         $this->removeClient($client);
@@ -376,36 +499,37 @@ class Server
     private function removeClient($client)
     {
         $clientId = (int)$client;
-        $this->logger->info("客户端断开连接 (ID: $clientId)");
+        //$this->logError("客户端断开连接 (ID: $clientId)", 'info', __FILE__, __LINE__);
+        
+        // 标记连接为断开
+        $this->closeConnection($client);
+        
         @fclose($client);
-        $index = array_search($client, $this->clients);
-        if ($index !== false) {
-            unset($this->clients[$index]);
-        }
+        unset($this->clients[$clientId]);
     }
     
     public function stop()
     {
-        $this->logger->info("正在停止代理服务器...");
+        $this->logError("正在停止代理服务器...", 'info', __FILE__, __LINE__);
         
         $this->isRunning = false;
         
         // 关闭所有客户端连接
         $clientCount = count($this->clients);
-        foreach ($this->clients as $client) {
-            $this->removeClient($client);
+        foreach ($this->clients as $clientInfo) {
+            $this->removeClient($clientInfo['socket']);
         }
         $this->clients = [];
-        $this->logger->info("已关闭 $clientCount 个客户端连接");
+        //$this->logError("已关闭 $clientCount 个客户端连接", 'info', __FILE__, __LINE__);
         
         // 关闭服务器 socket
         if ($this->socket) {
             @fclose($this->socket);
             $this->socket = null;
-            $this->logger->info("已关闭服务器 socket");
+            $this->logError("已关闭服务器 socket", 'info', __FILE__, __LINE__);
         }
         
-        $this->logger->info("代理服务器已停止");
+        $this->logError("代理服务器已停止", 'info', __FILE__, __LINE__);
         return true;
     }
     
@@ -416,10 +540,42 @@ class Server
     
     public function getStatus()
     {
-        return [
-            'running' => $this->isRunning,
-            'clients' => count($this->clients),
-            'channels' => count($this->channels)
-        ];
+        try {
+            // 清理不活跃连接
+            $this->cleanInactiveConnections();
+            
+            // 获取活跃连接数
+            $stmt = $this->db->query("SELECT COUNT(*) as count FROM channel_connections WHERE status = 'active'");
+            $totalConnections = $stmt->fetch(\PDO::FETCH_ASSOC)['count'];
+            
+            return [
+                'running' => $this->isRunning,
+                'clients' => count($this->clients),
+                'channels' => count($this->channels),
+                'connections' => $totalConnections
+            ];
+        } catch (\Exception $e) {
+            $this->logError("获取状态时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+            return [
+                'running' => $this->isRunning,
+                'clients' => count($this->clients),
+                'channels' => count($this->channels),
+                'connections' => 0
+            ];
+        }
+    }
+    
+    public function run()
+    {
+        try {
+            while ($this->isRunning) {
+                $this->processConnections();
+                usleep(10000); // 10ms，避免CPU占用过高
+            }
+            return true;
+        } catch (\Exception $e) {
+            $this->logError("代理服务器运行时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+            return false;
+        }
     }
 } 

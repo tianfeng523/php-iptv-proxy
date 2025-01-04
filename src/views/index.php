@@ -7,8 +7,8 @@ $currentPage = 'home';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IPTV 代理系统</title>
-    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@5.15.4/css/all.min.css" rel="stylesheet">
+    <link href="/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/css/all.min.css" rel="stylesheet">
     <style>
         .stats-card {
             height: 100%;
@@ -112,7 +112,7 @@ $currentPage = 'home';
                         <div class="card stats-card">
                             <div class="card-body">
                                 <h5 class="card-title">总连接数</h5>
-                                <p class="card-text">-</p>
+                                <p class="card-text" data-stat="connections">-</p>
                             </div>
                         </div>
                     </div>
@@ -212,15 +212,15 @@ $currentPage = 'home';
         </div>
     </div>
 	<?php require __DIR__ . '/footer.php'; ?>
-    <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script src="/css/bootstrap.bundle.min.js"></script>
     <script>
     // 添加全局状态变量
     let isProxyRunning = false;
-    let statusCheckInterval = null; // 用于存储定时检查的interval ID
-    let stoppedConfirmCount = 0;    // 用于记录确认停止的次数
-    let checkIntervalTime = <?= intval($settings['status_check_interval'] ?? 10) ?> * 1000; // 从PHP设置中获取检查间隔
+    let statusCheckInterval = null;
+    let stoppedConfirmCount = 0;
+    let checkIntervalTime = <?= intval($settings['status_check_interval'] ?? 10) ?> * 1000;
     
-    // 检查代理状态
+    // 检查代理状态和连接数
     function checkProxyStatus() {
         const proxySwitch = document.getElementById('proxySwitch');
         const statusText = document.getElementById('proxyStatusText');
@@ -231,56 +231,70 @@ $currentPage = 'home';
         fetch('/admin/proxy/status')
             .then(response => response.json())
             .then(result => {
-                console.log('Status response:', result); // 调试输出
                 if (result.success && result.data && result.data.running) {
-                    isProxyRunning = true; // 更新全局状态
-                    stoppedConfirmCount = 0; // 重置停止确认计数
+                    isProxyRunning = true;
+                    stoppedConfirmCount = 0;
                     proxySwitch.className = 'card stats-card proxy-switch active';
                     statusText.textContent = '运行中';
+                    
+                    // 如果代理在运行，获取连接统计
+                    updateConnectionStats();
                 } else {
-                    isProxyRunning = false; // 更新全局状态
+                    isProxyRunning = false;
                     proxySwitch.className = 'card stats-card proxy-switch inactive';
                     statusText.textContent = '已停止';
                     
-                    // 如果确认是停止状态，增加计数
-                    stoppedConfirmCount++;
-                    console.log('停止状态确认次数:', stoppedConfirmCount);
+                    // 清除连接数显示
+                    document.querySelector('.card-text[data-stat="connections"]').textContent = '-';
                     
-                    // 如果连续3次确认是停止状态，清除定时检查
-                    if (stoppedConfirmCount >= 3 && statusCheckInterval) {
-                        console.log('已确认停止状态，停止定时检查');
-                        clearInterval(statusCheckInterval);
-                        statusCheckInterval = null;
-                    }
+                    stoppedConfirmCount++;
                 }
             })
             .catch(error => {
-                console.error('Error:', error);
-                isProxyRunning = false; // 更新全局状态
+                console.error('检查代理状态时发生错误:', error);
                 proxySwitch.className = 'card stats-card proxy-switch inactive';
                 statusText.textContent = '检查失败';
             });
     }
-
+    
+    // 更新连接统计
+    function updateConnectionStats() {
+        fetch('/admin/proxy/connection-stats')
+            .then(response => response.json())
+            .then(result => {
+                if (result.success && result.data) {
+                    // 更新总连接数
+                    document.querySelector('.card-text[data-stat="connections"]').textContent = 
+                        result.data.connections || '0';
+                }
+            })
+            .catch(error => {
+                console.error('获取连接统计失败:', error);
+            });
+    }
+    
     // 切换代理状态
     function toggleProxy() {
+        if (isProxyRunning) {
+            stopProxy();
+        } else {
+            startProxy();
+        }
+    }
+
+    // 启动代理服务
+    function startProxy() {
         const proxySwitch = document.getElementById('proxySwitch');
         const statusText = document.getElementById('proxyStatusText');
         
         proxySwitch.className = 'card stats-card proxy-switch checking';
         statusText.textContent = '处理中...';
         
-        // 使用全局状态变量来判断当前状态
-        const action = isProxyRunning ? 'stop' : 'start';
-        console.log('Current proxy status:', isProxyRunning ? 'running' : 'stopped');
-        console.log('Executing action:', action);
-        
-        fetch(`/admin/proxy/${action}`, {
+        fetch('/admin/proxy/start', {
             method: 'POST'
         })
         .then(response => response.json())
         .then(result => {
-            console.log('Action response:', result);
             if (result.success) {
                 // 重置停止确认计数
                 stoppedConfirmCount = 0;
@@ -294,20 +308,59 @@ $currentPage = 'home';
                 // 等待更长时间后开始检查状态
                 setTimeout(() => {
                     // 开始定时检查状态
-                    statusCheckInterval = setInterval(() => {
-                        checkProxyStatus();
-                    }, checkIntervalTime); // 使用设置的检查间隔
+                    statusCheckInterval = setInterval(checkProxyStatus, checkIntervalTime);
                     // 立即执行一次检查
                     checkProxyStatus();
                 }, 2000); // 等待2秒后开始检查
             } else {
-                throw new Error(result.message || '操作失败');
+                throw new Error(result.message || '启动失败');
             }
         })
         .catch(error => {
-            console.error('Error:', error);
+            console.error('启动代理服务时发生错误:', error);
             checkProxyStatus(); // 发生错误时重新检查状态
-            alert(error.message || '操作失败，请重试');
+            alert(error.message || '启动失败，请重试');
+        });
+    }
+    
+    // 停止代理服务
+    function stopProxy() {
+        const proxySwitch = document.getElementById('proxySwitch');
+        const statusText = document.getElementById('proxyStatusText');
+        
+        proxySwitch.className = 'card stats-card proxy-switch checking';
+        statusText.textContent = '处理中...';
+        
+        fetch('/admin/proxy/stop', {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                // 重置停止确认计数
+                stoppedConfirmCount = 0;
+                
+                // 清除现有的定时检查
+                if (statusCheckInterval) {
+                    clearInterval(statusCheckInterval);
+                    statusCheckInterval = null;
+                }
+                
+                // 等待更长时间后开始检查状态
+                setTimeout(() => {
+                    // 开始定时检查状态
+                    statusCheckInterval = setInterval(checkProxyStatus, checkIntervalTime);
+                    // 立即执行一次检查
+                    checkProxyStatus();
+                }, 2000); // 等待2秒后开始检查
+            } else {
+                throw new Error(result.message || '停止失败');
+            }
+        })
+        .catch(error => {
+            console.error('停止代理服务时发生错误:', error);
+            checkProxyStatus(); // 发生错误时重新检查状态
+            alert(error.message || '停止失败，请重试');
         });
     }
 

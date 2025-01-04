@@ -39,7 +39,8 @@ class Router
         // 代理服务
         '/admin/proxy/status' => ['ProxyController', 'status'],
         '/admin/proxy/start' => ['ProxyController', 'start'],
-        '/admin/proxy/stop' => ['ProxyController', 'stop']
+        '/admin/proxy/stop' => ['ProxyController', 'stop'],
+        '/admin/proxy/connection-stats' => ['ProxyController', 'getConnectionStats']
     ];
 
     public static function dispatch($uri)

@@ -492,4 +492,56 @@ class ProxyController
             ]
         ]);
     }
+    
+    public function getConnectionStats()
+    {
+        try {
+            $db = \App\Core\Database::getInstance()->getConnection();
+            
+            // 清理不活跃连接（超过1分钟未活动）
+            $stmt = $db->prepare("UPDATE channel_connections 
+                SET status = 'disconnected' 
+                WHERE status = 'active' 
+                AND last_active_time < DATE_SUB(NOW(), INTERVAL 1 MINUTE)");
+            $stmt->execute();
+            
+            // 获取总连接数
+            $totalQuery = "SELECT COUNT(*) as count FROM channel_connections WHERE status = 'active'";
+            $stmt = $db->query($totalQuery);
+            $totalConnections = $stmt->fetch(\PDO::FETCH_ASSOC)['count'];
+            
+            // 获取每个频道的连接数
+            $channelQuery = "SELECT c.id, c.name, COUNT(cc.id) as connections 
+                           FROM channels c 
+                           LEFT JOIN channel_connections cc ON c.id = cc.channel_id 
+                           AND cc.status = 'active' 
+                           GROUP BY c.id, c.name 
+                           HAVING connections > 0 
+                           ORDER BY connections DESC";
+            $stmt = $db->query($channelQuery);
+            $channelConnections = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            
+            // 记录日志
+            $this->logger->info("当前活跃连接数: $totalConnections");
+            if ($totalConnections > 0) {
+                $this->logger->info("频道连接详情: " . json_encode($channelConnections));
+            }
+            
+            $this->sendJsonResponse([
+                'success' => true,
+                'data' => [
+                    'running' => true,
+                    'connections' => (int)$totalConnections,
+                    'channel_connections' => $channelConnections
+                ]
+            ]);
+        } catch (\Exception $e) {
+            $this->logger->error("获取连接统计信息时发生错误: " . $e->getMessage());
+            $this->logger->error("错误堆栈: " . $e->getTraceAsString());
+            $this->sendJsonResponse([
+                'success' => false,
+                'message' => '获取连接统计信息失败'
+            ]);
+        }
+    }
 } 

@@ -152,6 +152,13 @@ switch ($command) {
             cleanupFiles();
             exit(1);
         }
+        
+        // 运行服务器主循环
+        if (!$server->run()) {
+            $logger->error("代理服务器运行失败");
+            cleanupFiles();
+            exit(1);
+        }
         break;
         
     case 'stop':

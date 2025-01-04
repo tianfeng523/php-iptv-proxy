@@ -25,8 +25,8 @@ function buildUrl($params)
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>频道管理 - IPTV 代理系统</title>
-    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@5.15.4/css/all.min.css" rel="stylesheet">
+    <link href="/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/css/all.min.css" rel="stylesheet">
     <style>
     .btn-group-sm .btn {
         padding: 0.1rem 0.3rem;
@@ -235,10 +235,12 @@ function buildUrl($params)
         </div>
     </div>
 	<?php require __DIR__ . '/../../footer.php'; ?>
-    <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script src="/css/bootstrap.bundle.min.js"></script>
     <script>
     let checkModal;
     let currentCheckTask = null;
+    let connectionUpdateInterval = null;
+    let checkIntervalTime = <?= intval($settings['status_check_interval'] ?? 10) ?> * 1000;
 
     function buildUrl(params) {
         const current = new URLSearchParams(window.location.search);
@@ -257,6 +259,52 @@ function buildUrl($params)
 
     document.addEventListener('DOMContentLoaded', function() {
         checkModal = new bootstrap.Modal(document.getElementById('checkProgressModal'));
+        
+        // 开始定时更新连接数
+        startConnectionUpdates();
+    });
+
+    // 更新连接统计信息
+    function updateConnectionStats() {
+        fetch('/admin/proxy/connection-stats')
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    // 更新每个频道的连接数
+                    result.data.channel_connections.forEach(channel => {
+                        const row = document.getElementById(`channel-${channel.id}`);
+                        if (row) {
+                            const connectionCell = row.querySelector('td:nth-child(9)'); // 连接数列
+                            if (connectionCell) {
+                                connectionCell.textContent = channel.connections;
+                            }
+                        }
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('获取连接统计失败:', error);
+            });
+    }
+
+    function startConnectionUpdates() {
+        // 清除现有的定时器
+        if (connectionUpdateInterval) {
+            clearInterval(connectionUpdateInterval);
+        }
+        
+        // 立即更新一次
+        updateConnectionStats();
+        
+        // 设置定时更新
+        connectionUpdateInterval = setInterval(updateConnectionStats, checkIntervalTime);
+    }
+
+    // 在页面卸载时清除定时器
+    window.addEventListener('beforeunload', function() {
+        if (connectionUpdateInterval) {
+            clearInterval(connectionUpdateInterval);
+        }
     });
 
     function updateProgress(progress, status) {

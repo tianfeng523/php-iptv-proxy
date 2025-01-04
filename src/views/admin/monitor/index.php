@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>实时监控 - IPTV 代理系统</title>
-    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js" defer></script>
+    <link href="/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/css/all.min.css" rel="stylesheet">
+    <script src="/css/echarts.min.js" defer></script>
     <style>
         .card {
             margin-bottom: 1rem;
@@ -261,7 +261,7 @@
         </div>
     </div>
 	<?php require __DIR__ . '/../../footer.php'; ?>
-    <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/js/bootstrap.bundle.min.js" defer></script>
+    <script src="/css/bootstrap.bundle.min.js" defer></script>
     <script>
     let performanceChart = null;
     let groupChart = null;

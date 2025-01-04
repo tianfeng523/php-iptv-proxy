@@ -3,16 +3,9 @@ namespace App\Models;
 
 use App\Core\Database;
 
-class Log
+class ErrorLog
 {
     private $db;
-    
-    // 定义日志类型常量
-    const TYPE_IMPORT = 'import';
-    const TYPE_DELETE = 'delete';
-    const TYPE_EDIT = 'edit';
-    const TYPE_CREATE = 'create';
-    const TYPE_CLEAR = 'clear';
 
     public function __construct()
     {
@@ -23,46 +16,41 @@ class Log
     private function ensureTableStructure()
     {
         try {
-            $query = "CREATE TABLE IF NOT EXISTS channel_logs (
+            $query = "CREATE TABLE IF NOT EXISTS error_logs (
                 id INT AUTO_INCREMENT PRIMARY KEY,
-                type VARCHAR(20) NOT NULL,
-                action VARCHAR(255) NOT NULL,
-                channel_id INT,
-                channel_name VARCHAR(255),
-                group_id INT,
-                group_name VARCHAR(255),
-                details TEXT,
+                level VARCHAR(20) NOT NULL,
+                message TEXT NOT NULL,
+                file VARCHAR(255),
+                line INT,
+                trace TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_type (type),
-                INDEX idx_channel_id (channel_id),
+                INDEX idx_level (level),
                 INDEX idx_created_at (created_at)
             )";
             $this->db->exec($query);
         } catch (\PDOException $e) {
-            error_log("Error creating logs table: " . $e->getMessage());
+            error_log("Error creating error_logs table: " . $e->getMessage());
         }
     }
 
-    public function add($type, $action, $details = [], $channelId = null, $channelName = null, $groupId = null, $groupName = null)
+    public function add($data)
     {
         try {
-            $query = "INSERT INTO channel_logs (type, action, channel_id, channel_name, group_id, group_name, details) 
-                     VALUES (:type, :action, :channel_id, :channel_name, :group_id, :group_name, :details)";
+            $query = "INSERT INTO error_logs (level, message, file, line, trace) 
+                     VALUES (:level, :message, :file, :line, :trace)";
             
             $stmt = $this->db->prepare($query);
             $stmt->execute([
-                ':type' => $type,
-                ':action' => $action,
-                ':channel_id' => $channelId,
-                ':channel_name' => $channelName,
-                ':group_id' => $groupId,
-                ':group_name' => $groupName,
-                ':details' => json_encode($details, JSON_UNESCAPED_UNICODE)
+                ':level' => $data['level'],
+                ':message' => $data['message'],
+                ':file' => $data['file'],
+                ':line' => $data['line'],
+                ':trace' => $data['trace']
             ]);
             
             return true;
         } catch (\PDOException $e) {
-            error_log("Error adding log: " . $e->getMessage());
+            error_log("Error adding error log: " . $e->getMessage());
             return false;
         }
     }
@@ -74,24 +62,24 @@ class Log
             $params = [];
 
             if ($type) {
-                $where[] = "type = :type";
+                $where[] = "level = :type";
                 $params[':type'] = $type;
             }
 
             if ($startDate) {
                 $where[] = "created_at >= :start_date";
-                $params[':start_date'] = $startDate;
+                $params[':start_date'] = $startDate . ' 00:00:00';
             }
 
             if ($endDate) {
                 $where[] = "created_at <= :end_date";
-                $params[':end_date'] = $endDate;
+                $params[':end_date'] = $endDate . ' 23:59:59';
             }
 
             $whereClause = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
             
             // 获取总数
-            $countQuery = "SELECT COUNT(*) FROM channel_logs {$whereClause}";
+            $countQuery = "SELECT COUNT(*) FROM error_logs {$whereClause}";
             $stmt = $this->db->prepare($countQuery);
             $stmt->execute($params);
             $total = $stmt->fetchColumn();
@@ -99,9 +87,9 @@ class Log
             // 计算偏移量
             $offset = ($page - 1) * $perPage;
 
-            // 获取日志列表，按 ID 降序排序
-            $query = "SELECT * FROM channel_logs {$whereClause} 
-                     ORDER BY id DESC 
+            // 获取日志列表
+            $query = "SELECT * FROM error_logs {$whereClause} 
+                     ORDER BY created_at DESC 
                      LIMIT :limit OFFSET :offset";
 
             $stmt = $this->db->prepare($query);
@@ -124,19 +112,32 @@ class Log
                 'totalPages' => ceil($total / $perPage)
             ];
         } catch (\PDOException $e) {
-            error_log("Error getting logs: " . $e->getMessage());
+            error_log("Error getting error logs: " . $e->getMessage());
             return ['logs' => [], 'total' => 0, 'totalPages' => 0];
+        }
+    }
+
+    public function clearOldLogs($days = 30)
+    {
+        try {
+            $query = "DELETE FROM error_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL :days DAY)";
+            $stmt = $this->db->prepare($query);
+            $stmt->execute([':days' => $days]);
+            return true;
+        } catch (\PDOException $e) {
+            error_log("Error clearing old error logs: " . $e->getMessage());
+            return false;
         }
     }
 
     public function clearAll()
     {
         try {
-            $query = "TRUNCATE TABLE channel_logs";
+            $query = "TRUNCATE TABLE error_logs";
             $this->db->exec($query);
             return true;
         } catch (\PDOException $e) {
-            error_log("Error clearing channel logs: " . $e->getMessage());
+            error_log("Error clearing error logs: " . $e->getMessage());
             throw new \Exception("清空日志失败: " . $e->getMessage());
         }
     }

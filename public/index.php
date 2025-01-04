@@ -45,6 +45,11 @@ try {
             }
             break;
 
+        case '/admin/proxy/connection-stats':
+            $controller = new \App\Controllers\ProxyController();
+            $controller->getConnectionStats();
+            break;
+
         case '/admin/channels':
             $controller = new \App\Controllers\ChannelController();
             $controller->index();
@@ -175,6 +180,37 @@ try {
         case '/admin/logs/data':
             $controller = new \App\Controllers\LogController();
             $controller->getLogs();
+            break;
+
+        case '/admin/logs/clear':
+            if ($method === 'POST') {
+                $controller = new \App\Controllers\LogController();
+                $controller->clear();
+            } else {
+                http_response_code(405);
+                echo 'Method Not Allowed';
+            }
+            break;
+
+        // 错误日志相关路由
+        case '/admin/error-logs':
+            $controller = new \App\Controllers\ErrorLogController();
+            $controller->index();
+            break;
+
+        case '/admin/error-logs/data':
+            $controller = new \App\Controllers\ErrorLogController();
+            $controller->getLogs();
+            break;
+
+        case '/admin/error-logs/clear':
+            if ($method === 'POST') {
+                $controller = new \App\Controllers\ErrorLogController();
+                $controller->clear();
+            } else {
+                http_response_code(405);
+                echo 'Method Not Allowed';
+            }
             break;
 
         default:

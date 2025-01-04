@@ -31,4 +31,20 @@ class LogController
         header('Content-Type: application/json');
         echo json_encode($result);
     }
+
+    public function clear()
+    {
+        try {
+            $this->log->clearAll();
+            echo json_encode([
+                'success' => true,
+                'message' => '日志已清空'
+            ]);
+        } catch (\Exception $e) {
+            echo json_encode([
+                'success' => false,
+                'message' => $e->getMessage()
+            ]);
+        }
+    }
 } 
