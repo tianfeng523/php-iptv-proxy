@@ -99,7 +99,15 @@ class MonitorController
             // 组合所有数据
             $allStats = [
                 'channelStats' => $channelStats,
-                'groupStats' => $groupStats,
+                'groupStats' => array_map(function($group) {
+                    return [
+                        'name' => $group['name'],
+                        'value' => (int)$group['total_channels'],
+                        'active' => (int)$group['active_channels'],
+                        'error' => (int)$group['error_channels'],
+                        'avg_latency' => round((float)$group['avg_latency'], 2)
+                    ];
+                }, $groupStats),
                 'performanceStats' => $performanceStats,
                 'recentErrors' => $recentErrors,
                 'redisStats' => $redisStats

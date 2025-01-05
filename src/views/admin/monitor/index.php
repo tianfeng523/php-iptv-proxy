@@ -242,10 +242,11 @@
                                         <thead>
                                             <tr>
                                                 <th>频道名称</th>
-                                                <th>分组</th>
+                                                <th>所属分组</th>
                                                 <th>源地址</th>
                                                 <th>检查时间</th>
                                                 <th>延时</th>
+                                                <th>异常次数</th>
                                                 <th>操作</th>
                                             </tr>
                                         </thead>
@@ -398,6 +399,12 @@
 
     function updateGroupChart(stats) {
         if (!groupChart) return;
+        
+        // 确保stats是数组且不为空
+        if (!Array.isArray(stats) || stats.length === 0) {
+            console.warn('分组统计数据格式不正确:', stats);
+            return;
+        }
 
         const option = {
             tooltip: {
@@ -407,55 +414,74 @@
             legend: {
                 orient: 'vertical',
                 left: 'left',
-                type: 'scroll'
+                type: 'scroll',
+                textStyle: {
+                    fontSize: 12
+                }
             },
             series: [
                 {
                     name: '频道分布',
                     type: 'pie',
-                    radius: '50%',
-                    data: stats.map(item => ({
-                        name: item.name || '未分组',
-                        value: item.total_channels
-                    })),
+                    radius: ['40%', '70%'],
+                    avoidLabelOverlap: true,
+                    itemStyle: {
+                        borderRadius: 10,
+                        borderColor: '#fff',
+                        borderWidth: 2
+                    },
+                    label: {
+                        show: true,
+                        formatter: '{b}: {c} ({d}%)'
+                    },
                     emphasis: {
+                        label: {
+                            show: true,
+                            fontSize: 14,
+                            fontWeight: 'bold'
+                        },
                         itemStyle: {
                             shadowBlur: 10,
                             shadowOffsetX: 0,
                             shadowColor: 'rgba(0, 0, 0, 0.5)'
                         }
                     },
+                    data: stats.map(item => ({
+                        name: item.name || '未分组',
+                        value: parseInt(item.total_channels) || 0
+                    })),
                     animation: false
                 }
             ]
         };
 
-        groupChart.setOption(option, true);
+        try {
+            groupChart.setOption(option, true);
+        } catch (error) {
+            console.error('更新分组统计图表失败:', error);
+        }
     }
 
     function updateErrorTable(errors) {
         const tbody = document.querySelector('#errorTable tbody');
         const fragment = document.createDocumentFragment();
-
+        
         errors.forEach(error => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td>${error.name}</td>
                 <td>${error.group_name || '未分组'}</td>
-                <td class="source-url" title="${error.source_url}">
-                    ${error.source_url}
-                </td>
+                <td class="source-url" title="${error.source_url}">${error.source_url}</td>
                 <td>${error.checked_at}</td>
                 <td>${error.latency}ms</td>
+                <td>${error.error_count}</td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="checkChannel(${error.id})">
-                        重新检查
-                    </button>
+                    <button class="btn btn-sm btn-primary" onclick="checkChannel(${error.id})">重新检查</button>
                 </td>
             `;
             fragment.appendChild(tr);
         });
-
+        
         tbody.innerHTML = '';
         tbody.appendChild(fragment);
     }

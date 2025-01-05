@@ -18,6 +18,7 @@ class Channel
     {
         try {
             // 获取总频道数
+            //1是活跃的，2是不活跃的，3是错误的
             $totalQuery = "SELECT COUNT(*) as total FROM channels";
             $totalResult = $this->db->query($totalQuery);
             $total = $totalResult->fetch(\PDO::FETCH_ASSOC)['total'];
@@ -802,16 +803,16 @@ class Channel
     {
         try {
             $query = "SELECT 
-                     g.name as group_name,
-                     COUNT(*) as total,
-                     SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) as active,
-                     SUM(CASE WHEN c.status = 'error' THEN 1 ELSE 0 END) as error,
+                     COALESCE(g.name, '未分组') as name,
+                     COUNT(*) as total_channels,
+                     SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) as active_channels,
+                     SUM(CASE WHEN c.status = 'error' THEN 1 ELSE 0 END) as error_channels,
                      AVG(c.latency) as avg_latency
                      FROM channels c
                      LEFT JOIN channel_groups g ON c.group_id = g.id
-                     GROUP BY g.id, g.name
-                     ORDER BY total DESC
-                     LIMIT 10";
+                     GROUP BY g.id, g.name WITH ROLLUP
+                     HAVING name IS NOT NULL
+                     ORDER BY total_channels DESC";
             
             $stmt = $this->db->query($query);
             return $stmt->fetchAll(\PDO::FETCH_ASSOC);
@@ -888,8 +889,7 @@ class Channel
             $query = "SELECT c.*, g.name as group_name
                      FROM channels c
                      LEFT JOIN channel_groups g ON c.group_id = g.id
-                     WHERE c.status = 0
-                     AND c.checked_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+                     WHERE c.status = 3
                      ORDER BY c.checked_at DESC
                      LIMIT 10";
             

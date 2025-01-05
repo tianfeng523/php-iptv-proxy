@@ -116,17 +116,18 @@ function buildUrl($params)
                                 <th style="width: 40px;">
                                     <input type="checkbox" class="form-check-input" id="selectAll" onclick="toggleAll(this)">
                                 </th>
-                                <th style="width: 60px;">ID</th>
-                                <th style="width: 150px;">名称</th>
-                                <th style="width: 100px;">分组</th>
-                                <th style="width: 250px;">源地址</th>
-                                <th style="width: 250px;">代理地址</th>
-                                <th style="width: 80px;">状态</th>
-                                <th style="width: 80px;">延时</th>
-                                <th style="width: 100px;">连接数</th>
-                                <th style="width: 100px;">带宽</th>
-                                <th style="width: 100px;">检查时间</th>
-                                <th style="width: 100px;">异常次数</th>
+                                <th style="width: 60px;text-align: center;">ID</th>
+                                <th style="width: 150px;text-align: center;">名称</th>
+                                <th style="width: 100px;text-align: center;">分组</th>
+                                <th style="width: 250px;text-align: center;">源地址</th>
+                                <th style="width: 250px;text-align: center;">代理地址</th>
+                                <th style="width: 80px;text-align: center;">状态</th>
+                                <th style="width: 80px;text-align: center;">延时</th>
+                                <th style="width: 80px;text-align: center;">连接数</th>
+                                <th style="width: 120px;text-align: center;">上行带宽</th>
+                                <th style="width: 120px;text-align: center;">下行带宽</th>
+                                <th style="width: 100px;text-align: center;">检查时间</th>
+                                <th style="width: 80px;text-align: center;">异常次数</th>
                                 <th class="actions-cell">操作</th>
                             </tr>
                         </thead>
@@ -145,7 +146,7 @@ function buildUrl($params)
                                 <td class="url-cell" title="<?= $channel['proxy_url'] ? htmlspecialchars($channel['proxy_url']) : '未生成代理地址' ?>">
                                     <?= $channel['proxy_url'] ? htmlspecialchars($channel['proxy_url']) : '<span class="text-muted">未生成代理地址</span>' ?>
                                 </td>
-                                <td class="status-icon">
+                                <td class="status-icon" style="text-align: center;">
                                     <span class="badge bg-<?php 
                                         if ($channel['status'] === 'active') echo 'success';
                                         else if ($channel['status'] === 'error') echo 'danger';
@@ -158,13 +159,14 @@ function buildUrl($params)
                                         ?>
                                     </span>
                                 </td>
-                                <td class="latency-cell">
+                                <td class="latency-cell" style="text-align: center;">
                                     <?= $channel['status'] === 'active' ? $channel['latency'].'ms' : '-' ?>
                                 </td>
-                                <td><?= $channel['connections'] ?? 0 ?></td>
-                                <td><?= isset($channel['bandwidth']) ? number_format($channel['bandwidth'] / 1024 / 1024, 2) : '0' ?> MB/s</td>
-                                <td class="checked-at-cell"><?= $channel['checked_at'] ? date('Y-m-d H:i:s', strtotime($channel['checked_at'])) : '-' ?></td>
-                                <td class="error-count-cell">
+                                <td style="text-align: center;"><?= $channel['connections'] ?? 0 ?></td>
+                                <td style="text-align: center;"><?= isset($channel['upload_bandwidth']) ? number_format($channel['upload_bandwidth'], 2) : '0' ?> MB/s</td>
+                                <td style="text-align: center;"><?= isset($channel['download_bandwidth']) ? number_format($channel['download_bandwidth'], 2) : '0' ?> MB/s</td>
+                                <td class="checked-at-cell" style="text-align: center;"><?= $channel['checked_at'] ? date('Y-m-d H:i:s', strtotime($channel['checked_at'])) : '-' ?></td>
+                                <td class="error-count-cell" style="text-align: center;">
                                     <?php if ($channel['status'] === 'error'): ?>
                                         <span class="badge bg-warning"><?= $channel['error_count'] ?></span>
                                     <?php else: ?>
@@ -274,7 +276,7 @@ function buildUrl($params)
                     result.data.channel_connections.forEach(channel => {
                         const row = document.getElementById(`channel-${channel.id}`);
                         if (row) {
-                            const connectionCell = row.querySelector('td:nth-child(9)'); // 连接数列
+                            const connectionCell = row.querySelector('td:nth-child(9)');
                             if (connectionCell) {
                                 connectionCell.textContent = channel.connections;
                             }
@@ -286,18 +288,45 @@ function buildUrl($params)
                 console.error('获取连接统计失败:', error);
             });
     }
-
+    // 更新带宽统计信息
+    function updateBandwidthStats() {
+        fetch('/admin/proxy/bandwidth-stats')
+            .then(response => response.json())
+            .then(result => {
+                if (result.success && result.data.channels) {
+                    Object.entries(result.data.channels).forEach(([channelId, channelData]) => {
+                        const row = document.getElementById(`channel-${channelId}`);
+                        if (row) {
+                            const uploadCell = row.querySelector('td:nth-child(10)');
+                            const downloadCell = row.querySelector('td:nth-child(11)');
+                            
+                            if (uploadCell && downloadCell && channelData.stats) {
+                                uploadCell.textContent = channelData.stats.bandwidth.upload;
+                                downloadCell.textContent = channelData.stats.bandwidth.download;
+                            }
+                        }
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('获取带宽统计失败:', error);
+            });
+    }
     function startConnectionUpdates() {
         // 清除现有的定时器
         if (connectionUpdateInterval) {
             clearInterval(connectionUpdateInterval);
         }
-        
+    
         // 立即更新一次
         updateConnectionStats();
-        
+        updateBandwidthStats();
+    
         // 设置定时更新
-        connectionUpdateInterval = setInterval(updateConnectionStats, checkIntervalTime);
+        connectionUpdateInterval = setInterval(function() {
+            updateConnectionStats();
+            updateBandwidthStats();
+        }, checkIntervalTime);
     }
 
     // 在页面卸载时清除定时器

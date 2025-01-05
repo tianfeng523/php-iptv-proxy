@@ -213,6 +213,22 @@ try {
             }
             break;
 
+        // 带宽监控相关路由
+        case '/api/bandwidth':
+            $controller = new \App\Controllers\Api\BandwidthController();
+            $controller->getAll();
+            break;
+            
+        case (preg_match('/^\/api\/bandwidth\/(\d+)$/', $path, $matches) ? true : false):
+            $controller = new \App\Controllers\Api\BandwidthController();
+            $controller->getOne($matches[1]);
+            break;
+
+        case '/admin/proxy/bandwidth-stats':
+            $controller = new \App\Controllers\ProxyController();
+            $controller->getBandwidthStats();
+            break;
+
         default:
             http_response_code(404);
             echo '404 Not Found';
