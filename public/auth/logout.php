@@ -1,6 +1,6 @@
 <?php
-define('BASE_PATH', dirname(dirname(__DIR__)));
-require BASE_PATH . '/src/Controllers/AuthController.php';
+require __DIR__ . '/../../vendor/autoload.php';
 
-$controller = new App\Controllers\AuthController();
-$controller->logout(); 
+$controller = new \App\Controllers\AuthController();
+$controller->logout();
+?>

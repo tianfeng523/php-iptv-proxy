@@ -1,38 +1,41 @@
 <?php
+// 定义基础路径
 define('BASE_PATH', dirname(__DIR__));
-require BASE_PATH . '/install/Installer.php';
 
-$installer = new Installer();
+// 错误报告设置
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
-// 检查是否已安装
-if ($installer->checkLock()) {
-    header('Location: /login.php');
-    exit;
-}
+// 设置时区
+date_default_timezone_set('Asia/Shanghai');
 
-// 处理安装请求
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $result = $installer->install($_POST);
-    header('Content-Type: application/json');
-    
-    if ($result['success']) {
-        // 创建安装锁定文件
-        $installer->createLock();
-        // 清理安装文件
-        $installer->cleanup();
-        
-        // 返回成功结果，包含跳转URL
-        echo json_encode([
-            'success' => true,
-            'redirect' => '/login.php'
-        ]);
-    } else {
-        echo json_encode($result);
+// 加载安装程序类
+require BASE_PATH . '/src/Install/Installer.php';
+require BASE_PATH . '/src/Install/InstallController.php';
+
+// 创建必要的目录
+$directories = [
+    BASE_PATH . '/config',
+    BASE_PATH . '/storage/logs',
+    BASE_PATH . '/storage/cache',
+    BASE_PATH . '/storage/uploads',
+    __DIR__ . '/install/templates'  
+];
+
+foreach ($directories as $dir) {
+    if (!file_exists($dir)) {
+        if (!@mkdir($dir, 0755, true)) {
+            die("无法创建目录: $dir");
+        }
     }
-    exit;
 }
 
-// 显示安装页面
-$requirements = $installer->checkRequirements();
-$writableChecks = $installer->checkWritable();
-require BASE_PATH . '/install/templates/install.php'; 
+// 启动安装程序
+session_start();
+$installer = new InstallController();
+
+// 获取当前步骤
+$step = isset($_GET['step']) ? (int)$_GET['step'] : 1;
+
+// 运行安装程序
+$installer->run();

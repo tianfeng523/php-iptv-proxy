@@ -8,6 +8,31 @@ if (!file_exists(__DIR__ . '/../config/config.php') && !str_contains($_SERVER['R
     exit;
 }
 
+// 获取当前路径
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+
+// 不需要登录检查的路径
+$publicPaths = [
+    '/install',
+    '/install.php',
+    '/login',
+    '/login.php',
+    '/auth/login'
+];
+
+// 检查是否需要登录验证
+$needsAuth = true;
+foreach ($publicPaths as $publicPath) {
+    if (str_starts_with($path, $publicPath)) {
+        $needsAuth = false;
+        break;
+    }
+}
+
+// 如果需要登录验证，则检查登录状态
+if ($needsAuth) {
+    \App\Controllers\AuthController::checkLogin();
+}
 // 路由处理
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'];
@@ -228,7 +253,90 @@ try {
             $controller = new \App\Controllers\ProxyController();
             $controller->getBandwidthStats();
             break;
+        
+        // 安装相关路由
+        case '/install':
+            if (!file_exists(BASE_PATH . '/storage/installed.lock')) {
+                $controller = new \App\Install\InstallController();
+                $controller->run();
+            } else {
+                header('Location: /');
+            }
+            break;
+            
+        case '/install/check':
+            if (!file_exists(BASE_PATH . '/storage/installed.lock')) {
+                $controller = new \App\Install\InstallController();
+                if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+                    $controller->checkEnvironment();
+                }
+            }
+            break;
+            
+        case '/install/database':
+            if (!file_exists(BASE_PATH . '/storage/installed.lock')) {
+                $controller = new \App\Install\InstallController();
+                if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+                    $controller->configureDatabase($_POST);
+                }
+            }
+            break;
+            
+        case '/install/admin':
+            if (!file_exists(BASE_PATH . '/storage/installed.lock')) {
+                $controller = new \App\Install\InstallController();
+                if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+                    $controller->configureAdmin($_POST);
+                }
+            }
+            break;
+            
+        case '/install/finish':
+            if (!file_exists(BASE_PATH . '/storage/installed.lock')) {
+                $controller = new \App\Install\InstallController();
+                $controller->finish();
+            }
+            break;
+        
+        case '/install/database/test':
+            if (!file_exists(BASE_PATH . '/storage/installed.lock')) {
+                $controller = new \App\Install\InstallController();
+                if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+                    $controller->testDatabaseConnection();
+                }
+               }
+            break;
+            
+        case '/install/database/configure':
+            if (!file_exists(BASE_PATH . '/storage/installed.lock')) {
+                $controller = new \App\Install\InstallController();
+                if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+                    $controller->configureDatabase($_POST);
+                }
+            }
+            break;
 
+        // 登录相关路由
+        case '/login':
+        case '/login.php':
+            $controller = new \App\Controllers\AuthController();
+            $controller->login();
+            break;
+    
+        case '/auth/login':
+            if ($method === 'POST') {
+                $controller = new \App\Controllers\AuthController();
+                $controller->handleLogin();
+            } else {
+                http_response_code(405);
+                echo 'Method Not Allowed';
+            }
+            break;
+    
+        case '/auth/logout':
+            $controller = new \App\Controllers\AuthController();
+            $controller->logout();
+            break;
         default:
             http_response_code(404);
             echo '404 Not Found';

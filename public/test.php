@@ -1,3 +1,3 @@
 <?php
-echo "<a href='https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js'>下载</a>";
+echo "<a href='https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js'>下载</a>";
 phpinfo(); 
