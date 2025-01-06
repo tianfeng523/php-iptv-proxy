@@ -5,8 +5,8 @@ return array (
     'host' => 'localhost',
     'port' => '3306',
     'dbname' => 'iptv_proxy',
-    'username' => 'iptv_proxy',
-    'password' => 'your_password',
+    'username' => '',
+    'password' => '',
   ),
   'redis' => 
   array (
