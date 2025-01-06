@@ -281,3 +281,6 @@ MIT License
 - 问题反馈：提交Issue
 - 功能建议：提交Pull Request
 - 技术讨论：参与Discussions 
+- 
+
+可在程序根目录执行：docker-compose up -d

@@ -141,4 +141,15 @@ class ErrorLog
             throw new \Exception("清空日志失败: " . $e->getMessage());
         }
     }
+
+    // 添加获取总数的方法
+    public function getCount()
+    {
+        try {
+            $stmt = $this->db->query("SELECT COUNT(*) as count FROM error_logs");
+            return $stmt->fetch(\PDO::FETCH_ASSOC)['count'];
+        } catch (\Exception $e) {
+            return 0;
+        }
+    }
 } 

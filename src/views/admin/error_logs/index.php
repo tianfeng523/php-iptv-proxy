@@ -39,7 +39,7 @@
 
     <div class="container-fluid">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>错误日志</h2>
+            <h2>错误日志，共<?php echo number_format($errorCount); ?> 条记录</h2>
             <button type="button" class="btn btn-danger" onclick="confirmClearLogs()">
                 <i class="fas fa-trash-alt me-1"></i> 清空日志
             </button>

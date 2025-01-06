@@ -29,17 +29,36 @@ class Server
         $this->errorLog = new ErrorLog();
         $this->redis = new Redis();
     }
-    
-    private function logError($message, $level = 'error', $file = null, $line = null)
+    /**
+     * 记录程序错误日志
+     * @param string $message 错误信息
+     * @param string $level 错误级别
+     * @param string|null $file 文件路径
+     * @param mixed $context 行号或额外信息
+     */
+    private function logError($message, $level = 'error', $file = null, $context = null)
     {
         // 获取调用堆栈
         $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
         array_shift($trace); // 移除当前方法的堆栈
         
-        // 如果没有提供文件和行号，使用调用者的信息
+        // 如果没有提供文件，使用调用者的信息
         if ($file === null && !empty($trace[0]['file'])) {
             $file = $trace[0]['file'];
         }
+
+        // 初始化行号和额外信息
+        $line = null;
+        $additionalInfo = '';
+        
+        // 处理 $context 参数
+        if (is_numeric($context)) {
+            $line = $context;
+        } else {
+            $additionalInfo = $context;
+        }
+        
+        // 如果没有提供行号且堆栈中有行号，使用堆栈中的行号
         if ($line === null && !empty($trace[0]['line'])) {
             $line = $trace[0]['line'];
         }
@@ -51,7 +70,7 @@ class Server
                 'message' => $message,
                 'file' => $file,
                 'line' => $line,
-                'trace' => json_encode($trace, JSON_UNESCAPED_UNICODE)
+                'trace' => $additionalInfo ?: json_encode($trace, JSON_UNESCAPED_UNICODE) // 如果有额外信息，使用额外信息，否则使用堆栈
             ]);
         } catch (\Exception $e) {
             // 如果记录错误日志失败，至少要记录到系统日志
@@ -59,8 +78,9 @@ class Server
         }
         
         // 同时记录到系统日志
-        $this->logger->$level($message);
+        $this->logger->$level($message . ($additionalInfo ? " | {$additionalInfo}" : ''));
     }
+    
     
     private function loadChannels()
     {
@@ -345,7 +365,7 @@ private function cleanInactiveConnections()
                 }
             }
         } catch (\Exception $e) {
-            $this->logError("清理不活跃连接时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+            $this->logError("清理不活跃连接时发生错误: " . $e->getMessage(), 'warning', __FILE__, __LINE__);
         }
     }
     
@@ -388,7 +408,7 @@ private function cleanInactiveConnections()
             $channel = $this->findChannel($channelId);
             
             if (!$channel) {
-                $this->logError("未找到频道: $channelId", 'error', __FILE__, __LINE__);
+                $this->logError("未找到频道: $channelId", 'warning', __FILE__, __LINE__);
                 $response = "HTTP/1.1 404 Not Found\r\n";
                 $response .= "Content-Type: text/plain\r\n";
                 $response .= "Connection: close\r\n\r\n";
@@ -428,7 +448,7 @@ private function cleanInactiveConnections()
                         $this->updateConnectionStatus($client);
                     }
                 } catch (\Exception $e) {
-                    $this->logError("检查活跃连接时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
+                    $this->logError("检查活跃连接时发生错误: " . $e->getMessage(), 'warning', __FILE__, __LINE__);
                 }
             }
 
@@ -438,7 +458,7 @@ private function cleanInactiveConnections()
             } else if (preg_match('/\.ts$/', $requestFile)) {
                 $this->proxyTS($client, $channel, $requestFile);
             } else {
-                $this->logError("不支持的文件类型: $requestFile", 'error', __FILE__, __LINE__);
+                $this->logError("不支持的文件类型: $requestFile", 'warning', __FILE__, __LINE__);
                 $response = "HTTP/1.1 400 Bad Request\r\n";
                 $response .= "Content-Type: text/plain\r\n";
                 $response .= "Connection: close\r\n\r\n";
@@ -447,7 +467,7 @@ private function cleanInactiveConnections()
                 $this->removeClient($client);
             }
         } else {
-            $this->logError("无效的URL格式: $path", 'error', __FILE__, __LINE__);
+            $this->logError("无效的URL格式: $path", 'warning', __FILE__, __LINE__);
             $response = "HTTP/1.1 404 Not Found\r\n";
             $response .= "Content-Type: text/plain\r\n";
             $response .= "Connection: close\r\n\r\n";
@@ -470,7 +490,7 @@ private function cleanInactiveConnections()
         
         $content = @file_get_contents($channel['source_url'], false, $context);
         if ($content === false) {
-            $this->logError("无法获取m3u8内容: " . $channel['source_url'], 'error', __FILE__, __LINE__);
+            $this->logError("无法获取m3u8内容: " . $channel['source_url'], 'warning', __FILE__, __LINE__);
             $this->removeClient($client);
             return;
         }
@@ -499,98 +519,157 @@ private function cleanInactiveConnections()
     private function proxyTS($client, $channel, $tsFile)
     {
         try {
-            // 从原始m3u8中获取完整的ts文件路径
+            // 设置上下文选项
             $context = stream_context_create([
                 'http' => [
                     'timeout' => $this->config->get('proxy_timeout', 10),
-                    'user_agent' => 'PHP IPTV Proxy'
+                    'user_agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'header' => [
+                        'Accept: */*',
+                        'Accept-Language: zh-CN,zh;q=0.9',
+                        'Connection: close'
+                    ]
+                ],
+                'ssl' => [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false
                 ]
             ]);
-            
+
             // 获取原始m3u8内容
             $content = @file_get_contents($channel['source_url'], false, $context);
             if ($content === false) {
-                $this->logError("无法获取m3u8内容: " . $channel['source_url'], 'error', __FILE__, __LINE__);
-                $this->removeClient($client);
-                return;
-            }
-            
-            // 在原始m3u8内容中查找完整的ts文件URL
-            $tsBaseName = pathinfo($tsFile, PATHINFO_FILENAME);
-            if (!preg_match('/' . preg_quote($tsBaseName, '/') . '.*\.ts[^\n]*/i', $content, $matches)) {
-                $this->logError("在m3u8中未找到对应的TS文件: $tsFile", 'error', __FILE__, __LINE__);
+                $this->logError("无法获取m3u8内容", 'warning', $channel['source_url'], "获取M3U8失败");
                 $this->removeClient($client);
                 return;
             }
 
-            $tsFullPath = $matches[0];
-            $sourceUrl = dirname($channel['source_url']) . '/' . $tsFullPath;
-            
-            // 打开源流
-            $source = @fopen($sourceUrl, 'r', false, $context);
+            // 在原始m3u8内容中查找TS文件
+            $lines = explode("\n", $content);
+            $sourceUrl = '';
+            $baseUrl = dirname($channel['source_url']);
+
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (empty($line) || strpos($line, '#') === 0) {
+                    continue;
+                }
+
+                // 提取文件名部分（不含查询参数）
+                $tsBaseName = basename(parse_url($line, PHP_URL_PATH));
+                $requestBaseName = basename(parse_url($tsFile, PHP_URL_PATH));
+
+                if ($tsBaseName === $requestBaseName) {
+                    // 如果是完整URL
+                    if (filter_var($line, FILTER_VALIDATE_URL)) {
+                        $sourceUrl = $line;
+                    } else {
+                        // 如果是相对路径
+                        $sourceUrl = $baseUrl . '/' . ltrim($line, '/');
+                    }
+                    break;
+                }
+            }
+
+            // 如果在m3u8中没找到，尝试直接使用传入的tsFile
+            if (empty($sourceUrl)) {
+                if (filter_var($tsFile, FILTER_VALIDATE_URL)) {
+                    $sourceUrl = $tsFile;
+                } else {
+                    $sourceUrl = $baseUrl . '/' . ltrim($tsFile, '/');
+                }
+            }
+
+            // 记录调试信息
+            //$this->logError("尝试访问TS文件", 'info', $channel['source_url'], "TS URL: " . $sourceUrl);
+
+            // 打开源文件流
+            $source = @fopen($sourceUrl, 'rb', false, $context);
             if (!$source) {
-                $this->logError("无法打开TS文件: $sourceUrl", 'error', __FILE__, __LINE__);
+                $error = error_get_last();
+                $this->logError("无法打开TS文件", 'warning', $channel['source_url'], 
+                    "URL: " . $sourceUrl . "\n" .
+                    "错误: " . ($error['message'] ?? '未知错误')
+                );
                 $this->removeClient($client);
                 return;
             }
-            
+
             // 发送 HTTP 头
-            $response = "HTTP/1.1 200 OK\r\n";
-            $response .= "Content-Type: video/mp2t\r\n";
-            $response .= "Access-Control-Allow-Origin: *\r\n";
-            $response .= "Cache-Control: no-cache\r\n";
-            $response .= "Connection: close\r\n\r\n";
-            
-            if (@fwrite($client, $response) === false) {
+            $headers = [
+                "HTTP/1.1 200 OK",
+                "Content-Type: video/mp2t",
+                "Access-Control-Allow-Origin: *",
+                "Cache-Control: no-cache",
+                "Connection: close",
+                "Transfer-Encoding: chunked",
+                ""
+            ];
+
+            if (@fwrite($client, implode("\r\n", $headers) . "\r\n") === false) {
                 @fclose($source);
                 $this->removeClient($client);
                 return;
             }
-            
-            // 设置流为非阻塞模式
-            stream_set_blocking($source, false);
-            
-            // 获取缓冲区大小配置并转换为字节
-            $bufferSize = $this->config->get('proxy_buffer_size', 8192) * 1024;
-            
-            // 转发流内容
-            while (!feof($source) && $this->isRunning) {
-                $data = @fread($source, $bufferSize);
-                if ($data === false) {
+
+            // 使用分块传输
+            $totalReceived = 0;
+            $totalSent = 0;
+            $bufferSize = $this->config->get('proxy_buffer_size', 8192) * 1024; // 从配置中获取缓冲区大小，默认8192KB
+
+            while (!feof($source)) {
+                $chunk = @fread($source, $bufferSize);
+                if ($chunk === false) {
                     break;
                 }
-                
-                $written = @fwrite($client, $data);
+
+                $chunkLength = strlen($chunk);
+                // 写入块大小（十六进制）
+                if (@fwrite($client, dechex($chunkLength) . "\r\n") === false) {
+                    break;
+                }
+                // 写入块内容
+                $written = @fwrite($client, $chunk . "\r\n");
                 if ($written === false) {
                     break;
                 }
-                
+
+                $totalReceived += $chunkLength;
+                $totalSent += $written;
+
                 // 更新带宽统计
-                $this->updateBandwidthStats($channel['id'], strlen($data), $written);
-                
-                // 定期更新连接状态
+                $this->updateBandwidthStats($channel['id'], $chunkLength, $written);
+
+                // 更新连接状态
                 $clientId = (int)$client;
                 if (isset($this->clients[$clientId]['session_id'])) {
                     $this->updateConnectionStatus($client);
                 }
-                
-                usleep(1000);
             }
-            
+
+            // 写入结束块
+            @fwrite($client, "0\r\n\r\n");
+
+            // 记录传输结果
+            if ($totalReceived > 0) {
+                //$this->logError("TS文件传输完成", 'info', $channel['source_url'], 
+                //    "总接收: " . $totalReceived . " 字节\n" .
+                //    "总发送: " . $totalSent . " 字节"
+                //);
+            }
+
             // 清理
             @fclose($source);
-            
-            // 最后一次更新状态并移除客户端
-            $clientId = (int)$client;
-            if (isset($this->clients[$clientId]['session_id'])) {
-                $this->updateConnectionStatus($client);
-            }
             $this->removeClient($client);
-            
+
         } catch (\Exception $e) {
-            $this->logError("处理TS文件时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
-            $this->logError("错误堆栈: " . $e->getTraceAsString(), 'error', __FILE__, __LINE__);
-            @fclose($source);
+            $this->logError("处理TS文件时发生错误", 'error', $channel['source_url'], 
+                "错误信息: " . $e->getMessage() . "\n" .
+                "TS文件: " . $tsFile
+            );
+            if (isset($source)) {
+                @fclose($source);
+            }
             $this->removeClient($client);
         }
     }

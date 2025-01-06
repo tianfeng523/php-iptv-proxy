@@ -15,6 +15,8 @@ class ErrorLogController
     public function index()
     {
         $currentPage = 'error_logs';
+        // 使用模型获取错误日志总数
+        $errorCount = $this->errorLogModel->getCount();
         require __DIR__ . '/../views/admin/error_logs/index.php';
     }
 
@@ -71,4 +73,5 @@ class ErrorLogController
             ]);
         }
     }
+
 } 
