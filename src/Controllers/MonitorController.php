@@ -1,9 +1,11 @@
 <?php
 namespace App\Controllers;
 
+use App\Core\Config;
 use App\Models\Channel;
 use App\Models\Settings;
 use Redis;
+
 
 class MonitorController
 {
@@ -49,6 +51,9 @@ class MonitorController
     {
         try {
             // 尝试从缓存获取所有统计数据
+            $config = Config::getInstance();
+            $monitor_cache_stats_key = $config->get('monitor_cache_stats', 'monitor:cache_stats');
+
             $cacheKey = 'monitor:all_stats';
             $allStats = $this->getFromCache($cacheKey, 10);
             
@@ -95,6 +100,13 @@ class MonitorController
                 $redisStats = $this->getRedisStats();
                 $this->saveToCache('monitor:redis_stats', $redisStats, 10);
             }
+
+            // 6. 内存缓存统计数据（缓存10秒）
+            $memoryCacheStats = $this->getFromCache($monitor_cache_stats_key, 10);
+            if ($memoryCacheStats === false) {
+                $memoryCacheStats = $this->getMemoryCacheStats();
+                $this->saveToCache($monitor_cache_stats_key, $memoryCacheStats, 10);
+            }
             
             // 组合所有数据
             $allStats = [
@@ -110,7 +122,8 @@ class MonitorController
                 }, $groupStats),
                 'performanceStats' => $performanceStats,
                 'recentErrors' => $recentErrors,
-                'redisStats' => $redisStats
+                'redisStats' => $redisStats,
+                'memoryCacheStats' => $memoryCacheStats  // 添加内存缓存统计
             ];
             
             // 缓存组合后的数据（10秒）
@@ -139,8 +152,10 @@ class MonitorController
             $info = $this->redis->info();
             return [
                 'version' => $info['redis_version'] ?? '',
-                'used_memory' => $this->formatBytes($info['used_memory'] ?? 0),
-                'used_memory_peak' => $this->formatBytes($info['used_memory_peak'] ?? 0),
+                //'used_memory' => $this->formatBytes($info['used_memory'] ?? 0),
+                'used_memory' => $info['used_memory'] ?? 0,
+                //'used_memory_peak' => $this->formatBytes($info['used_memory_peak'] ?? 0),
+                'used_memory_peak' =>$info['used_memory_peak'] ?? 0,
                 'connected_clients' => $info['connected_clients'] ?? 0,
                 'total_connections_received' => $info['total_connections_received'] ?? 0,
                 'total_commands_processed' => $info['total_commands_processed'] ?? 0,
@@ -275,6 +290,97 @@ class MonitorController
             } catch (\Exception $e) {
                 error_log("Redis close error: " . $e->getMessage());
             }
+        }
+    }
+
+    private function getMemoryCacheStats()
+    {
+        try {
+            // 获取缓存实例
+            $cache = \App\Core\ChannelContentCache::getInstance();
+            
+            // 获取缓存状态
+            $stats = $cache->getCacheStats();
+            
+            // 获取配置
+            $enabled = $this->settingsModel->get('enable_memory_cache', false);
+            $maxSize = $this->settingsModel->get('max_memory_cache_size', 256) * 1024 * 1024; // 转换为字节
+            
+            return [
+                'enabled' => $enabled,
+                'ttl' => $this->settingsModel->get('memory_cache_ttl', 30),
+                'max_size' => $maxSize,
+                'used_memory' => $this->formatBytes($stats['used_memory']),
+                'items_count' => $stats['items_count'],
+                'hit_rate' => round($stats['hit_rate'], 2) . '%',
+                'm3u8_count' => $stats['m3u8_count'],
+                'ts_count' => $stats['ts_count'],
+                'channel_count' => count($stats['channels'] ?? []),
+                // 添加详细的命中统计
+                'total_requests' => $stats['total_requests'],
+                'total_hits' => $stats['total_hits'],
+                'memory_hits' => $stats['memory_hits'],
+                'redis_hits' => $stats['redis_hits'],
+                'total_misses' => $stats['total_misses'],
+                // M3U8 详细统计
+                'm3u8_hits' => $stats['m3u8_hits'],
+                'm3u8_memory_hits' => $stats['m3u8_memory_hits'],
+                'm3u8_redis_hits' => $stats['m3u8_redis_hits'],
+                'm3u8_misses' => $stats['m3u8_misses'],
+                'm3u8_hit_rate' => round($stats['m3u8_hit_rate'], 2) . '%',
+                // TS 详细统计
+                'ts_hits' => $stats['ts_hits'],
+                'ts_memory_hits' => $stats['ts_memory_hits'],
+                'ts_redis_hits' => $stats['ts_redis_hits'],
+                'ts_misses' => $stats['ts_misses'],
+                'ts_hit_rate' => round($stats['ts_hit_rate'], 2) . '%',
+                // 清理统计
+                'last_cleanup_time' => $stats['last_cleanup_time'],
+                'total_cleanup_count' => $stats['total_cleanup_count'],
+                'total_cleaned_items' => $stats['total_cleaned_items'],
+                // 缓存配置信息
+                'memory_cache_enabled' => $stats['memory_cache_enabled'],
+                'redis_cache_enabled' => $stats['redis_cache_enabled'],
+                'max_memory_cache_size_mb' => $stats['max_memory_cache_size_mb'],
+                'cache_cleanup_interval' => $stats['cache_cleanup_interval'],
+                'time_since_last_cleanup' => $stats['time_since_last_cleanup']
+            ];
+        } catch (\Exception $e) {
+            error_log("Error getting memory cache stats: " . $e->getMessage());
+            return [
+                'enabled' => false,
+                'ttl' => 0,
+                'max_size' => 0,
+                'used_memory' => 0,
+                'items_count' => 0,
+                'hit_rate' => '0%',
+                'm3u8_count' => 0,
+                'ts_count' => 0,
+                'channel_count' => 0,
+                'total_requests' => 0,
+                'total_hits' => 0,
+                'memory_hits' => 0,
+                'redis_hits' => 0,
+                'total_misses' => 0,
+                'm3u8_hits' => 0,
+                'm3u8_memory_hits' => 0,
+                'm3u8_redis_hits' => 0,
+                'm3u8_misses' => 0,
+                'm3u8_hit_rate' => '0%',
+                'ts_hits' => 0,
+                'ts_memory_hits' => 0,
+                'ts_redis_hits' => 0,
+                'ts_misses' => 0,
+                'ts_hit_rate' => '0%',
+                'last_cleanup_time' => 0,
+                'total_cleanup_count' => 0,
+                'total_cleaned_items' => 0,
+                'memory_cache_enabled' => false,
+                'redis_cache_enabled' => false,
+                'max_memory_cache_size_mb' => 0,
+                'cache_cleanup_interval' => 0,
+                'time_since_last_cleanup' => 0
+            ];
         }
     }
 } 

@@ -148,6 +148,7 @@ INSERT INTO `settings` (`key`, `value`, `description`, `created_at`, `updated_at
 ('redis_password', '', 'Redis密码', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
 ('redis_port', '6379', 'Redis端口', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
 ('site_name', 'IPTV代理系统', '站点名称', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-('status_check_interval', '10', '状态检查间隔(秒)', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+('status_check_interval', '10', '状态检查间隔(秒)', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+('clear_logs_on_stop', '0', '停止时是否清空日志', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
 SET FOREIGN_KEY_CHECKS=1;

@@ -154,8 +154,10 @@ class Channel
             $ch = curl_init($sourceUrl);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-            curl_setopt($ch, CURLOPT_NOBODY, true);
+            //curl_setopt($ch, CURLOPT_NOBODY, true);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_RANGE, '0-1024');  // 只获取前1KB内容
+            curl_setopt($ch, CURLOPT_USERAGENT, 'VLC/3.0.20 LibVLC/3.0.20');  // 添加User-Agent
             
             $startTime = microtime(true);
             $result = curl_exec($ch);

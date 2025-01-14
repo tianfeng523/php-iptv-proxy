@@ -132,7 +132,7 @@
 
                 <!-- Redis 监控部分 -->
                 <div class="row mt-4">
-                    <div class="col-md-12">
+                    <div class="col-md-7">
                         <div class="card">
                             <div class="card-header bg-light">
                                 <h5 class="card-title mb-0">
@@ -219,6 +219,98 @@
                                                 <div class="mb-2">
                                                     <small class="text-muted">从节点数：</small>
                                                     <span id="redis-slaves"><?= $initialData['data']['redisStats']['connected_slaves'] ?? 0 ?></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 内存缓存监控 -->
+                    <div class="col-md-5">
+                        <div class="card">
+                            <div class="card-header bg-light">
+                                <h5 class="card-title mb-0">
+                                    <i class="fas fa-memory"></i> 内存缓存监控
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="card border-0">
+                                            <div class="card-body">
+                                                <h6 class="text-muted">缓存状态</h6>
+                                                    <small class="text-muted">状态：</small>
+                                                    <span id="memory-cache-status" class="badge badge-success"></span>
+                                                
+                                                <div class="mb-2">
+                                                    <small class="text-muted">缓存时间：</small>
+                                                    <span id="memory-cache-ttl"></span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">总命中：</small>
+                                                    <span id="total_hits"></span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">内存命中：</small>
+                                                    <span id="memory_hits"></span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">Redis命中：</small>
+                                                    <span id="redis_hits"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-md-4">
+                                        <div class="card border-0">
+                                            <div class="card-body">
+                                                <h6 class="text-muted">内存使用</h6>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">已用：</small>
+                                                    <span id="memory-cache-used"></span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">总量：</small>
+                                                    <span id="memory-cache-total"></span>
+                                                </div>
+                                                <div class="progress" style="height: 5px;">
+                                                    <div class="progress-bar" id="memory-cache-progress" style="width: 0%"></div>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">上次清理时间：<br /></small>
+                                                    <span id="last_cleanup_time"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-md-4">
+                                        <div class="card border-0">
+                                            <div class="card-body">
+                                                <h6 class="text-muted">缓存项</h6>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">M3U8文件：</small>
+                                                    <span id="memory-cache-m3u8"></span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">TS文件：</small>
+                                                    <span id="memory-cache-ts"></span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">总数：</small>
+                                                    <span id="memory-cache-items"></span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">累计清理项：</small>
+                                                    <span id="total_cleanup_count"></span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <small class="text-muted">清理项目数：</small>
+                                                    <span id="total_cleaned_items"></span>
                                                 </div>
                                             </div>
                                         </div>
@@ -327,6 +419,11 @@
             // 更新 Redis 统计信息
             if (data.redisStats) {
                 updateRedisStats(data.redisStats);
+            }
+
+            // 需要在这里添加内存缓存统计的更新
+            if (data.memoryCacheStats) {
+                updateMemoryCacheStats(data.memoryCacheStats);
             }
         });
     }
@@ -505,8 +602,8 @@
         document.getElementById('redis-last-save').textContent = stats.last_save_time;
 
         // 内存使用
-        document.getElementById('redis-memory').textContent = stats.used_memory;
-        document.getElementById('redis-memory-peak').textContent = stats.used_memory_peak;
+        document.getElementById('redis-memory').textContent = formatBytes(parseFloat(stats.used_memory));
+        document.getElementById('redis-memory-peak').textContent = formatBytes(parseFloat(stats.used_memory_peak));
         const memoryPercent = (parseInt(stats.used_memory) / parseInt(stats.used_memory_peak) * 100).toFixed(2);
         const memoryProgress = document.getElementById('redis-memory-progress');
         memoryProgress.style.width = memoryPercent + '%';
@@ -521,6 +618,98 @@
         document.getElementById('redis-hit-rate').textContent = stats.hit_rate;
         document.getElementById('redis-connections').textContent = stats.connected_clients;
         document.getElementById('redis-slaves').textContent = stats.connected_slaves;
+    }
+
+    function formatTimestamp(timestamp) {
+        if (!timestamp || timestamp === 0) {
+            return '无';
+        }
+        
+        const date = new Date(timestamp * 1000); // 转换为毫秒
+        
+        // 补零函数
+        const pad = (num) => (num < 10 ? '0' + num : num);
+        
+        return date.getFullYear() + '-' + 
+            pad(date.getMonth() + 1) + '-' + 
+            pad(date.getDate()) + ' ' + 
+            pad(date.getHours()) + ':' + 
+            pad(date.getMinutes()) + ':' + 
+            pad(date.getSeconds());
+    }
+
+    function formatBytes(bytes, unit = '') {
+        if (unit === 'MB') {
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+        
+        if (bytes === 0) return '0 B';
+        
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    function updateMemoryCacheStats(stats) {
+
+        // 1. 检查状态显示
+        const statusElement = document.getElementById('memory-cache-status');
+        if (statusElement) {
+            statusElement.textContent = stats.enabled ? '已启用' : '已禁用';
+            statusElement.className = 'badge ' + (stats.enabled ? 'bg-success text-white' : 'bg-danger text-white');
+        } else {
+            console.error('memory-cache-status element not found');  // 错误日志
+        }
+
+        // 2. 创建一个映射来检查每个元素
+        const updates = {
+            'memory-cache-ttl': stats.ttl + '秒',
+            'total_hits': stats.total_hits,
+            'memory-cache-used': stats.used_memory,
+            'memory-cache-total': stats.max_size,
+            'memory-cache-m3u8': stats.m3u8_count,
+            'memory-cache-ts': stats.ts_count,
+            'memory-cache-items': stats.items_count,
+            'memory_hits': stats.memory_hits,
+            'redis_hits': stats.redis_hits,
+            'last_cleanup_time': formatTimestamp(stats.last_cleanup_time),
+            'total_cleanup_count': stats.total_cleanup_count,
+            'total_cleaned_items': stats.total_cleaned_items,
+        };
+
+        // 3. 逐个检查并更新元素
+        Object.entries(updates).forEach(([id, value]) => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.textContent = value;
+            } else {
+                console.error(`Element not found: ${id}`);  // 错误日志
+            }
+        });
+
+        // 更新使用量显示（自动选择合适的单位）
+        const usedElement = document.getElementById('memory-cache-used');
+        if (usedElement) {
+            usedElement.textContent = formatBytes(parseFloat(stats.used_memory));
+        }
+        
+        // 更新总容量显示（固定显示为MB）
+        const totalElement = document.getElementById('memory-cache-total');
+        if (totalElement) {
+            totalElement.textContent = formatBytes(parseFloat(stats.max_size));
+        }
+
+        // 4. 检查进度条更新
+        const progressBar = document.getElementById('memory-cache-progress');
+        if (progressBar) {
+            const usedBytes = parseFloat(stats.used_memory);
+            const totalBytes = parseFloat(stats.max_size);
+            const usedPercent = (usedBytes / totalBytes * 100) || 0;
+            progressBar.style.width = usedPercent + '%';
+            progressBar.className = 'progress-bar ' + 
+                (usedPercent > 90 ? 'bg-danger' : (usedPercent > 70 ? 'bg-warning' : 'bg-success'));
+        }
     }
 
     // 监听窗口大小变化，调整图表大小

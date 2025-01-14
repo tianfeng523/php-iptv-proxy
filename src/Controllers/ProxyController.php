@@ -362,13 +362,44 @@ class ProxyController
         
         // 清理PID文件
         @unlink($this->pidFile);
+        // 检查是否需要清空日志
+        if ($this->config->get('clear_logs_on_stop', '0') == '1'){
+            // 清空错误日志表
+            $this->db->query("TRUNCATE TABLE error_logs");
+            // 清空应用日志文件
+            $logFile = dirname(dirname(__DIR__)) . '/storage/logs/app.log';
+            if (file_exists($logFile)) {
+                file_put_contents($logFile, '');
+            }
+        }
+
+        // 检查是否需要清空连接记录
+        if ($this->config->get('clear_connections', '0') == '1') {
+            // 清空连接日志表
+            $this->db->query("TRUNCATE TABLE channel_connections");
+        }
         
+        // 获取缓存统计数据的 Redis key
+        $monitorCacheKey = $this->config->get('monitor_cache_stats', 'monitor:cache_stats');
+        
+        // 删除缓存统计数据
+        try {
+            $redis = new Redis();
+            if ($redis->exists($monitorCacheKey)) {
+                $redis->del($monitorCacheKey);
+                $this->logger->info("已清除缓存统计数据: {$monitorCacheKey}");
+            }
+        } catch (\Exception $e) {
+            $this->logger->error("清除缓存统计数据失败: " . $e->getMessage());
+        }
+
         if ($stopped || !$this->isRunning($pid)) {
             $this->logError('代理服务器已停止', 'info', __FILE__, __LINE__);
             $this->sendJsonResponse([
                 'success' => true,
                 'message' => '代理服务器已停止'
             ]);
+            
         } else {
             $this->logError('代理服务器停止失败', 'error', __FILE__, __LINE__);
             $this->sendJsonResponse([
@@ -377,7 +408,7 @@ class ProxyController
             ]);
         }
     }
-    
+
     public function status()
     {
         $pid = @file_get_contents($this->pidFile);
@@ -556,18 +587,6 @@ class ProxyController
         }
     }
     
-    private function formatBytes($bytes, $precision = 2)
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        
-        $bytes /= (1 << (10 * $pow));
-        
-        return round($bytes, $precision) . ' ' . $units[$pow];
-    }
     
     private function formatBandwidthStats($stats, $channel)
     {
@@ -745,6 +764,11 @@ class ProxyController
         ];
     }
     
+    /**
+     * 获取带宽统计数据
+     * 
+     * @return void 直接输出JSON格式的带宽统计信息
+     */
     public function getBandwidthStats()
     {
         try {
@@ -765,13 +789,55 @@ class ProxyController
                     return;
                 }
                 
-                $stats = $this->redis->hGetAll("proxy:stats:{$channel['id']}");
+                $key = "proxy:stats:{$channel['id']}";
+                $currentStats = $this->redis->get($key);
+                $stats = $currentStats ? json_decode($currentStats, true) : null;
                 
-                $this->sendJsonResponse([
-                    'success' => true,
-                    'data' => $this->formatBandwidthStats($stats, $channel)
-                ]);
+                if ($stats) {
+                    $formattedStats = [
+                        'channel_id' => $channel['id'],
+                        'name' => $channel['name'],
+                        'stats' => [
+                            'traffic' => [
+                                'received' => $this->formatBytes($stats['bytes_received']),
+                                'sent' => $this->formatBytes($stats['bytes_sent'])
+                            ],
+                            'bandwidth' => [
+                                'download' => $this->formatBytes($stats['bandwidth_received']) . '/s',
+                                'upload' => $this->formatBytes($stats['bandwidth_sent']) . '/s'
+                            ],
+                            'last_update' => date('Y-m-d H:i:s', $stats['last_update']),
+                            'debug' => [
+                                'bytes_received' => $stats['bytes_received'],
+                                'bytes_sent' => $stats['bytes_sent'],
+                                'bandwidth_received' => $stats['bandwidth_received'],
+                                'bandwidth_sent' => $stats['bandwidth_sent'],
+                                'last_update' => $stats['last_update'],
+                                'last_reset' => $stats['last_reset']
+                            ]
+                        ]
+                    ];
+                    
+                    $this->sendJsonResponse([
+                        'success' => true,
+                        'data' => $formattedStats
+                    ]);
+                } else {
+                    $this->sendJsonResponse([
+                        'success' => true,
+                        'data' => [
+                            'channel_id' => $channel['id'],
+                            'name' => $channel['name'],
+                            'stats' => [
+                                'traffic' => ['received' => '0 B', 'sent' => '0 B'],
+                                'bandwidth' => ['download' => '0 B/s', 'upload' => '0 B/s'],
+                                'last_update' => date('Y-m-d H:i:s', $timestamp)
+                            ]
+                        ]
+                    ]);
+                }
             } else {
+                // 获取所有频道的统计数据
                 $stmt = $this->db->query("SELECT id, name FROM channels WHERE status = 1");
                 $channels = $stmt->fetchAll(\PDO::FETCH_ASSOC);
                 
@@ -783,32 +849,36 @@ class ProxyController
                 $activeChannelsWithTraffic = 0;
                 
                 foreach ($channels as $channel) {
-                    $currentKey = "proxy:stats:{$channel['id']}";
-                    $currentStats = $this->redis->hGetAll($currentKey);
+                    $key = "proxy:stats:{$channel['id']}";
+                    $currentStats = $this->redis->get($key);
+                    $channelStats = $currentStats ? json_decode($currentStats, true) : null;
                     
-                    if (!empty($currentStats)) {
-                        // 使用 formatBandwidthStats 获取频道数据
-                        $channelData = $this->formatBandwidthStats($currentStats, $channel);
-                        $stats[$channel['id']] = $channelData;
+                    if ($channelStats) {
+                        // 累加总流量和带宽
+                        $totalReceived += $channelStats['bytes_received'];
+                        $totalSent += $channelStats['bytes_sent'];
+                        $totalDownloadSpeed += $channelStats['bandwidth_received'];
+                        $totalUploadSpeed += $channelStats['bandwidth_sent'];
                         
-                        // 从频道数据中提取带宽信息
-                        if (!empty($channelData['stats']['debug']['bytes_diff']['received'])) {
-                            // 累加总流量
-                            $totalReceived += intval($currentStats['bytes_received'] ?? 0);
-                            $totalSent += intval($currentStats['bytes_sent'] ?? 0);
-                            
-                            // 从频道数据中提取带宽速率
-                            $downloadSpeedRaw = $channelData['stats']['debug']['bytes_diff']['received'] / 
-                                ($channelData['stats']['debug']['time_diff'] ?: 1);
-                            $uploadSpeedRaw = $channelData['stats']['debug']['bytes_diff']['sent'] / 
-                                ($channelData['stats']['debug']['time_diff'] ?: 1);
-                            
-                            if ($downloadSpeedRaw > 0 || $uploadSpeedRaw > 0) {
-                                $totalDownloadSpeed += $downloadSpeedRaw;
-                                $totalUploadSpeed += $uploadSpeedRaw;
-                                $activeChannelsWithTraffic++;
-                            }
+                        if ($channelStats['bandwidth_received'] > 0 || $channelStats['bandwidth_sent'] > 0) {
+                            $activeChannelsWithTraffic++;
                         }
+                        
+                        $stats[$channel['id']] = [
+                            'channel_id' => $channel['id'],
+                            'name' => $channel['name'],
+                            'stats' => [
+                                'traffic' => [
+                                    'received' => $this->formatBytes($channelStats['bytes_received']),
+                                    'sent' => $this->formatBytes($channelStats['bytes_sent'])
+                                ],
+                                'bandwidth' => [
+                                    'download' => $this->formatBytes($channelStats['bandwidth_received']) . '/s',
+                                    'upload' => $this->formatBytes($channelStats['bandwidth_sent']) . '/s'
+                                ],
+                                'last_update' => date('Y-m-d H:i:s', $channelStats['last_update'])
+                            ]
+                        ];
                     }
                 }
                 
@@ -844,13 +914,33 @@ class ProxyController
             }
         } catch (\Exception $e) {
             $this->logError("获取带宽统计信息时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
-            $this->logError("错误堆栈: " . $e->getTraceAsString(), 'error', __FILE__, __LINE__);
             $this->sendJsonResponse([
                 'success' => false,
                 'message' => '获取带宽统计失败: ' . $e->getMessage()
             ]);
         }
     }
+
+/**
+ * 格式化字节大小
+ * 将字节数转换为人类可读的格式
+ * 
+ * @param float $bytes 字节数
+ * @param int $precision 精确度
+ * @return string 格式化后的大小字符串
+ */
+private function formatBytes($bytes, $precision = 2)
+{
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    
+    $bytes = max($bytes, 0);
+    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
+    $pow = min($pow, count($units) - 1);
+    
+    $bytes /= (1 << (10 * $pow));
+    
+    return round($bytes, $precision) . ' ' . $units[$pow];
+}
     
     private function logError($message, $level = 'error', $file = null, $line = null)
     {

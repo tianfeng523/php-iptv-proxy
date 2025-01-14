@@ -35,12 +35,6 @@ class SettingsController extends Controller
                 'proxy_host',
                 'proxy_port',
                 'proxy_timeout',
-                'proxy_buffer_size',
-                'max_error_count',
-                'cache_time',
-                'chunk_size',
-                'redis_host',
-                'redis_port',
                 'monitor_refresh_interval',
                 'status_check_interval',
                 'check_mode'
@@ -52,32 +46,26 @@ class SettingsController extends Controller
                 }
             }
             
+            // 处理布尔值字段
+            $booleanFields = ['enable_memory_cache', 'enable_redis_cache', 'clear_logs_on_stop','clear_connections'];
+            foreach ($booleanFields as $field) {
+                // 如果字段不存在，说明复选框未选中，设置为 false
+                $data[$field] = isset($data[$field]) ? (bool)$data[$field] : false;
+            }
+                        
             // 验证端口范围
             if (!is_numeric($data['proxy_port']) || $data['proxy_port'] < 1 || $data['proxy_port'] > 65535) {
                 Response::error('代理服务器端口号必须在 1-65535 之间');
             }
-            if (!is_numeric($data['redis_port']) || $data['redis_port'] < 1 || $data['redis_port'] > 65535) {
+            
+            // 验证Redis端口（如果提供）
+            if (isset($data['redis_port']) && (!is_numeric($data['redis_port']) || $data['redis_port'] < 1 || $data['redis_port'] > 65535)) {
                 Response::error('Redis 端口号必须在 1-65535 之间');
             }
             
             // 验证超时时间
             if (!is_numeric($data['proxy_timeout']) || $data['proxy_timeout'] < 1 || $data['proxy_timeout'] > 300) {
                 Response::error('代理服务器超时时间必须在 1-300 秒之间');
-            }
-            
-            // 验证缓冲区大小
-            if (!is_numeric($data['proxy_buffer_size']) || $data['proxy_buffer_size'] < 1024 || $data['proxy_buffer_size'] > 1048576) {
-                Response::error('代理服务器缓冲区大小必须在 1KB-1MB 之间');
-            }
-            
-            // 验证缓存时间
-            if (!is_numeric($data['cache_time']) || $data['cache_time'] < 1) {
-                Response::error('缓存时间必须大于 0 秒');
-            }
-            
-            // 验证分片大小
-            if (!is_numeric($data['chunk_size']) || $data['chunk_size'] < 1024 || $data['chunk_size'] > 10485760) {
-                Response::error('分片大小必须在 1KB-10MB 之间');
             }
             
             // 验证监控刷新时间
@@ -90,6 +78,19 @@ class SettingsController extends Controller
                 Response::error('服务状态检查间隔必须在 1-60 秒之间');
             }
             
+            // 验证缓存相关设置
+            if (isset($data['cache_cleanup_interval'])) {
+                if (!is_numeric($data['cache_cleanup_interval']) || $data['cache_cleanup_interval'] < 60 || $data['cache_cleanup_interval'] > 3600) {
+                    Response::error('缓存清理间隔必须在 60-3600 秒之间');
+                }
+            }
+            
+            if (isset($data['max_memory_cache_size'])) {
+                if (!is_numeric($data['max_memory_cache_size']) || $data['max_memory_cache_size'] < 128 || $data['max_memory_cache_size'] > 8192) {
+                    Response::error('最大内存缓存大小必须在 128-8192 MB之间');
+                }
+            }
+            
             // 验证检查模式相关设置
             if ($data['check_mode'] === 'daily') {
                 if (empty($data['daily_check_time'])) {
@@ -100,20 +101,12 @@ class SettingsController extends Controller
                     $data['check_interval'] < 1 || $data['check_interval'] > 24) {
                     Response::error('检查间隔必须在 1-24 小时之间');
                 }
-            } else {
+            } else if ($data['check_mode'] !== 'manual') {
                 Response::error('无效的检查模式');
             }
             
             // 保存设置
-            $success = true;
-            foreach ($data as $key => $value) {
-                if (!$this->settings->set($key, $value)) {
-                    $success = false;
-                    break;
-                }
-            }
-            
-            if ($success) {
+            if ($this->settings->save($data)) {
                 Response::success(null, '设置已保存');
             } else {
                 Response::error('保存设置失败');

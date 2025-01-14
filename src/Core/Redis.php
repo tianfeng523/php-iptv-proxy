@@ -71,4 +71,33 @@ class Redis
     {
         return $this->redis->del($key);
     }
+    
+    // 添加 setex 方法
+    public function setex($key, $seconds, $value)
+    {
+        return $this->redis->setex($key, $seconds, $value);
+    }
+
+    /**
+     * 将哈希表中指定字段的整数值增加指定的增量值
+     * @param string $key 键名
+     * @param string $field 字段名
+     * @param int $increment 增量值
+     * @return int 增加后的值
+     */
+    public function hIncrBy($key, $field, $increment)
+    {
+        return $this->redis->hIncrBy($key, $field, $increment);
+    }
+
+    /**
+     * 获取哈希表中指定字段的值
+     * @param string $key 键名
+     * @param string $field 字段名
+     * @return string|false 字段值，如果字段不存在则返回false
+     */
+    public function hGet($key, $field)
+    {
+        return $this->redis->hGet($key, $field);
+    }
 } 
