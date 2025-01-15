@@ -135,7 +135,7 @@ class AsyncLoader
                 // 根据任务类型处理内容
                 if ($task['type'] === 'ts') {
                     // 添加带宽统计，从源服务器获取的数据是下行带宽
-                    //$this->updateBandwidthStats($task['channel_id'], strlen($content), 0);
+                    $this->updateBandwidthStats($task['channel_id'], strlen($content), 0);
                     $cache = ChannelContentCache::getInstance();
                     $cache->cacheTs($task['channel_id'], $task['url'], $content);
                 }

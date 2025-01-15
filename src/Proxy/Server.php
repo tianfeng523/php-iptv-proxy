@@ -706,7 +706,7 @@ class Server
             // 使用分块传输
             $totalReceived = 0;
             $totalSent = 0;
-            $bufferSize = ($this->config->get('proxy_buffer_size', 4096) * 1024); // 缓冲区的大小
+            $bufferSize = ($this->config->get('proxy_buffer_size', 4096) * 1024 * 1024); // 缓冲区的大小
             $tempContent = ''; // 用于累积完整内容以便缓存
 
             if ($isStream) {
@@ -745,7 +745,7 @@ class Server
                 for ($i = 0; $i < strlen($content); $i += $bufferSize) {
                     $chunk = substr($content, $i, $bufferSize);
                     $chunkLength = strlen($chunk);
-                    
+                    /*
                     // 写入块大小
                     $hexLength = dechex($chunkLength) . "\r\n";
                     $written1 = 0;
@@ -757,9 +757,10 @@ class Server
                         }
                         $written1 += $result;
                     }
-                    
+                    */
                     // 写入块内容
-                    $chunk .= "\r\n";
+                    $chunk = dechex($chunkLength) . "\r\n" . $chunk . "\r\n";
+                    //$chunk .= "\r\n";
                     $written2 = 0;
                     while ($written2 < strlen($chunk)) {
                         $result = @fwrite($client, substr($chunk, $written2));
@@ -771,53 +772,12 @@ class Server
                     }
                 
                     $totalReceived += $chunkLength;
-                    $totalSent += ($written1 + $written2);
-                    
-                /*
-                    $this->logError(sprintf(
-                        "[发送详情] 块大小: %d, 十六进制长度写入: %d, 块内容写入: %d, 总接收: %d, 总发送: %d",
-                        $chunkLength,
-                        $written1,
-                        $written2,
-                        $totalReceived,
-                        $totalSent
-                    ), 'info', __FILE__, __LINE__);
-                */
+                    $totalSent += $written2;
                 }
                 //从缓存读取不产生下行带宽，只有发送给客户端的上行带宽
                 $this->updateBandwidthStats($channel['id'], 0, $totalSent);
                 //$this->logError("[sendChunkedResponse]结束向客户端发送缓存内容，原始数据量：" . $totalReceived . ", 发送大小：" . $totalSent, 'warning', __FILE__, __LINE__);
             }
-            /*
-                // 保存源文件用于验证
-                if ($isStream) {
-                    try {
-                        // 生成唯一的文件名
-                        $timestamp = date('YmdHis');
-                        $random = mt_rand(1000, 9999);
-                        $filename = dirname(dirname(__DIR__)) . "/storage/cache/yuan_{$timestamp}_{$random}.ts";
-                        
-                        // 确保缓存目录存在
-                        if (!is_dir(dirname($filename))) {
-                            mkdir(dirname($filename), 0777, true);
-                        }
-                        
-                        // 写入文件
-                        if (@file_put_contents($filename, $tempContent) !== false) {
-                            $this->logError("[验证日志] sendChunkedResponse源文件已保存: {$filename}", 'info', __FILE__, __LINE__);
-                            $this->logError("[验证日志] sendChunkedResponse源文件内容长度: " . strlen($tempContent), 'info', __FILE__, __LINE__);
-                            
-                            // 计算MD5
-                            $sourceMd5 = md5($tempContent);
-                            $this->logError("[验证日志] sendChunkedResponse源文件MD5: {$sourceMd5}", 'info', __FILE__, __LINE__);
-                        } else {
-                            $this->logError("[验证日志] sendChunkedResponse写入源文件失败", 'error', __FILE__, __LINE__);
-                        }
-                    } catch (\Exception $e) {
-                        $this->logError("[验证日志] sendChunkedResponse保存源文件时发生错误: " . $e->getMessage(), 'error', __FILE__, __LINE__);
-                    }
-                }
-            */
             // 写入结束块
             @fwrite($client, "0\r\n\r\n");
             //$this->logError("【sendChunkedResponse】结束块写入", 'info', __FILE__, __LINE__);
@@ -857,7 +817,7 @@ class Server
                 // 尝试从缓存获取
                 $cachedContent = $this->cache->getTs($channel['id'], $sourceUrl);
                 if ($cachedContent !== null) {
-                    $this->logError("【proxyTS】缓存命中 - 频道ID: {$channel['id']}, 缓存键: {$cacheKey}", 'info', __FILE__, __LINE__);
+                    $this->logError("【proxyTS】缓存命中 - 频道ID: {$channel['id']}, 缓存键: {$cacheKey}", 'info',"", "");
                     // 发送缓存的内容
                     $this->sendChunkedResponse($client, $cachedContent, $channel, false);
                     return;
@@ -888,7 +848,7 @@ class Server
             // 打开源文件流
             $source = @fopen($sourceUrl, 'rb', false, $context);
             if ($source) {
-                $bufferSize = ($this->config->get('proxy_buffer_size', 4096) * 1024); // 缓冲区的大小
+                $bufferSize = ($this->config->get('proxy_buffer_size', 4096) * 1024 * 1024); // 缓冲区的大小
                 stream_set_read_buffer($source, $bufferSize);  // 读取缓冲
                 stream_set_chunk_size($source, $bufferSize);   // 块大小
                 stream_set_write_buffer($client, $bufferSize); // 写入缓冲

@@ -83,9 +83,9 @@
                                         <input type="number" class="form-control" name="proxy_timeout" value="<?= intval($settings['proxy_timeout'] ?? 10) ?>">
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">缓冲区大小（KB）</label>
+                                        <label class="form-label">缓冲区大小（MB）</label>
                                         <input type="number" class="form-control" name="proxy_buffer_size" value="<?= intval($settings['proxy_buffer_size'] ?? 8) ?>">
-                                        <small class="text-muted">实际字节数为此值乘以1024，例如：8表示8KB（8192字节）</small>
+                                        <small class="text-muted">实际字节数为此值乘以1024的平方，例如：8表示8MB</small>
                                     </div>
                                     <div class="form-group">
                                         <label>

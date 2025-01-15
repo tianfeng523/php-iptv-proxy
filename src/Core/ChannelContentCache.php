@@ -559,7 +559,7 @@ class ChannelContentCache
                 if (time() - self::$m3u8Cache[$channelId]['time'] < $memoryCacheTTL) {
                     // 更新缓存统计
                     $this->updateCacheStats('m3u8_memory_hit');
-                    $this->errorLog("【m3u8Cache】内存缓存命中,channelId:{$channelId}", 'info', __FILE__, __LINE__);
+                    //$this->errorLog("【m3u8Cache】内存缓存命中,channelId:{$channelId}", 'info', __FILE__, __LINE__);
                     return self::$m3u8Cache[$channelId]['content'];
                 }
                 //$this->errorLog("【m3u8Cache】内存缓存已过期", 'info', __FILE__, __LINE__);
